@@ -1,0 +1,89 @@
+# 🔹 Node.js / React / React Native
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+
+# 🔹 Build / Cache
+dist/
+build/
+.expo/
+.expo-shared/
+.cache/
+.vscode/
+
+# 🔹 Environment Variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# 🔹 Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+coverage/
+*.pid
+*.seed
+*.pid.lock
+
+# 🔹 Dependency Directories
+.bower_components/
+jspm_packages/
+
+# 🔹 Editor / OS Files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+.idea/
+.vscode/
+*.iml
+
+# 🔹 Python (FastAPI)
+__pycache__/
+*.py[cod]
+*.sqlite3
+venv/
+env/
+myenv/
+instance/
+db.sqlite3
+*.pyc
+
+# 🔹 Virtual Environments
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 🔹 Git Ignore for JetBrains IDEs (WebStorm, PyCharm, etc.)
+.idea/
+*.iml
+
+# 🔹 Android / iOS (React Native)
+android/app/debug.keystore
+android/.gradle/
+android/.idea/
+android/local.properties
+android/app/build/
+android/app/src/debug/
+android/app/src/release/
+android/app/src/main/assets/index.android.bundle
+android/app/src/main/assets/index.android.bundle.map
+ios/Pods/
+ios/build/
+ios/*.xcodeproj/
+
+# 🔹 Miscellaneous
+.npm/
+.yarn/
+*.sublime-workspace
+*.sublime-project
+

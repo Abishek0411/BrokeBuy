@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from app.models.listing import ListingCreate, ListingResponse
 from app.utils.auth import get_current_user
 from app.database import db
 from datetime import datetime
 from bson import ObjectId
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/listings", tags=["Listings"])
 
@@ -29,14 +29,6 @@ async def get_all_listings():
         listings.append(ListingResponse(**listing))
     return listings
 
-@router.get("/{listing_id}", response_model=ListingResponse)
-async def get_listing_by_id(listing_id: str):
-    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found")
-    listing["id"] = str(listing["_id"])
-    return ListingResponse(**listing)
-
 @router.post("/buy/{listing_id}", response_model=dict)
 async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
@@ -54,7 +46,7 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="User not found")
 
     user_wallet = user_data.get("wallet_balance", 0.0)
-    price = listing["price"]
+    price = float(listing["price"])
 
     if user_wallet < price:
         raise HTTPException(status_code=400, detail="Insufficient wallet balance")
@@ -64,6 +56,14 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         {"_id": ObjectId(user.id)},
         {"$inc": {"wallet_balance": -price}}
     )
+
+    await db.wallet_history.insert_one({
+        "user_id": user.id,
+        "type": "debit",
+        "amount": price,
+        "ref_note": f"Purchased listing: {listing['title']}",
+        "timestamp": datetime.utcnow()
+    })
 
     # Mark listing as sold
     await db.listings.update_one(
@@ -78,3 +78,51 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     )
 
     return {"message": "Listing purchased successfully ✅"}
+
+@router.get("/search")
+async def search_listings(
+    category: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    query: Optional[str] = None,
+    exclude_sold: bool = True,
+):
+    search_query = {}
+
+    if category:
+        search_query["category"] = {"$regex": f"^{category}$", "$options": "i"}
+
+    if min_price is not None or max_price is not None:
+        price_filter = {}
+        if min_price is not None:
+            price_filter["$gte"] = min_price
+        if max_price is not None:
+            price_filter["$lte"] = max_price
+        search_query["price"] = price_filter
+
+    if query:
+        search_query["$or"] = [
+            {"title": {"$regex": query, "$options": "i"}},
+            {"description": {"$regex": query, "$options": "i"}},
+        ]
+
+    if exclude_sold:
+        search_query["is_sold"] = False
+
+    results = await db.listings.find(search_query).to_list(length=None)
+
+    for listing in results:
+        listing["_id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing.get("posted_by", ""))
+        listing["buyer_id"] = str(listing.get("buyer_id", ""))
+
+    return results
+
+
+@router.get("/{listing_id}", response_model=ListingResponse)
+async def get_listing_by_id(listing_id: str):
+    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    listing["id"] = str(listing["_id"])
+    return ListingResponse(**listing)

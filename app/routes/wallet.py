@@ -23,7 +23,7 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         {"$inc": {"wallet_balance": data.amount}}
     )
 
-    await db.transactions.insert_one({
+    await db.wallet_history.insert_one({
         "user_id": ObjectId(user.id),
         "type": "credit",
         "amount": data.amount,
@@ -36,13 +36,15 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
 # ✅ View transaction history
 @router.get("/history")
 async def get_transaction_history(user=Depends(get_current_user)):
-    txns = await db.transactions.find(
-        {"user_id": ObjectId(user.id)}
+    user_id = ObjectId(user.id)
+
+    txns = await db.wallet_history.find(
+        {"user_id": user_id}
     ).sort("timestamp", -1).to_list(100)
 
-    for t in txns:
-        t["_id"] = str(t["_id"])
-        t["user_id"] = str(t["user_id"])
-        t["timestamp"] = t["timestamp"].isoformat()
+    for txn in txns:
+        txn["_id"] = str(txn["_id"])
+        txn["user_id"] = str(txn["user_id"])
+        txn["timestamp"] = txn["timestamp"].isoformat()
 
     return txns

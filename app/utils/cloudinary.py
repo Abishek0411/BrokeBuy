@@ -1,6 +1,9 @@
 import cloudinary
 import cloudinary.uploader
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
@@ -8,6 +11,6 @@ cloudinary.config(
     api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
-def upload_image(file):
-    result = cloudinary.uploader.upload(file)
+async def upload_image_to_cloudinary(file):
+    result = cloudinary.uploader.upload(file.file, folder="BrokeBuyListings")
     return result["secure_url"]

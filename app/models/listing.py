@@ -8,6 +8,7 @@ class ListingCreate(BaseModel):
     price: float
     category: str
     images: List[str] = Field(default_factory=list)
+    
 
 class ListingResponse(ListingCreate):
     id: str

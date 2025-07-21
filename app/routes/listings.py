@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from app.models.listing import ListingCreate, ListingResponse, ListingUpdate
 from app.models.user import TokenUser
+from app.utils import cloudinary
 from app.utils.auth import get_current_user
-from app.utils.cloudinary import upload_image_to_cloudinary
+from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.database import db
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -28,11 +29,14 @@ async def create_listing(data: ListingCreate, user: TokenUser = Depends(get_curr
 async def get_all_listings():
     listings = await db.listings.find({"is_sold": False}).to_list(length=None)
 
-    # Clean up object IDs and other conversions
     for listing in listings:
         listing["id"] = str(listing["_id"])
         listing["posted_by"] = str(listing["posted_by"])
-        listing["images"] = listing.get("images", [])
+        
+        # Convert public_ids → optimized URLs
+        image_ids = listing.get("images", [])
+        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+
         listing.pop("_id", None)
 
     return listings
@@ -130,18 +134,21 @@ async def search_listings(
     return results
 
 
-@router.get("/{listing_id}", response_model=ListingResponse)
-async def get_listing_by_id(listing_id: str):
-    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found")
-    
-    listing["id"] = str(listing["_id"])
-    listing["images"] = listing.get("images", [])
-    listing["posted_by"] = str(listing.get("posted_by", ""))
-    listing["buyer_id"] = str(listing.get("buyer_id", ""))
+@router.get("/", response_model=List[dict])
+async def get_all_listings():
+    listings = await db.listings.find({"is_sold": False}).to_list(length=None)
 
-    return ListingResponse(**listing)
+    for listing in listings:
+        listing["id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing["posted_by"])
+        
+        # Convert public_ids → optimized URLs
+        image_ids = listing.get("images", [])
+        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+
+        listing.pop("_id", None)
+
+    return listings
 
 @router.post("/upload-image", response_model=dict)
 async def upload_image(
@@ -154,36 +161,70 @@ async def upload_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
+@router.get("/{listing_id}", response_model=ListingResponse)
+async def get_listing_by_id(listing_id: str):
+    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    
+    listing["id"] = str(listing["_id"])
+    listing["posted_by"] = str(listing.get("posted_by", ""))
+    listing["buyer_id"] = str(listing.get("buyer_id", ""))
+    
+    # Convert public_ids → optimized URLs
+    image_ids = listing.get("images", [])
+    listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+
+    return ListingResponse(**listing)
+
 @router.put("/{listing_id}")
 async def update_listing(
     listing_id: str,
-    update_data: ListingUpdate,
+    update_data: ListingUpdate = Depends(),  # the base metadata updates
+    images_to_keep: List[str] = Form([]),    # `public_id`s from frontend
+    new_images: List[UploadFile] = File([]), # new files to upload
     user: TokenUser = Depends(get_current_user)
 ):
     listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
-    
+
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
 
     if str(listing["posted_by"]) != str(user.id):
         raise HTTPException(status_code=403, detail="You are not allowed to update this listing")
 
-    # Use .model_dump() with exclude_unset=True. This is the modern equivalent
-    # of filtering for non-None values and only includes fields explicitly
-    # sent in the request payload.
-    update_dict = update_data.model_dump(exclude_unset=True)
+    # Handle image update logic
+    existing_ids = listing.get("images", [])
     
-    # Only update if there's actually data to update
-    if update_dict:
-        # Use timezone-aware UTC datetime for the update timestamp
-        update_dict["updated_at"] = datetime.now(timezone.utc)
+    # 1. Delete removed public_ids from Cloudinary
+    to_delete = list(set(existing_ids) - set(images_to_keep))
+    for public_id in to_delete:
+        cloudinary.uploader.destroy(public_id)
 
-        await db.listings.update_one(
-            {"_id": ObjectId(listing_id)},
-            {"$set": update_dict}
-        )
+    # 2. Upload new images to Cloudinary
+    new_image_ids = []
+    for image in new_images:
+        uploaded = await upload_image_to_cloudinary(image)
+        new_image_ids.append(uploaded["public_id"])
 
-    return {"message": "Listing updated successfully"}
+    # 3. Final image list = kept + new
+    final_image_ids = images_to_keep + new_image_ids
+
+    # 4. Apply metadata updates
+    update_dict = update_data.model_dump(exclude_unset=True)
+    update_dict["images"] = final_image_ids
+    update_dict["updated_at"] = datetime.now(timezone.utc)
+
+    await db.listings.update_one(
+        {"_id": ObjectId(listing_id)},
+        {"$set": update_dict}
+    )
+
+    return {
+        "message": "Listing updated successfully ✅",
+        "updated_images": [get_optimized_image_url(pid) for pid in final_image_ids]
+    }
+
 
 @router.delete("/{listing_id}")
 async def delete_listing(

@@ -12,11 +12,13 @@ router = APIRouter(prefix="/listings", tags=["Listings"])
 
 @router.post("/create")
 async def create_listing(data: ListingCreate, user: TokenUser = Depends(get_current_user)):
-    listing = data.dict()
+    listing = data.model_dump()
     listing["posted_by"] = user.id
     listing["is_sold"] = False
-    listing["created_at"] = datetime.utcnow()
-    listing["updated_at"] = datetime.utcnow()
+
+    now = datetime.now(timezone.utc)
+    listing["created_at"] = now
+    listing["updated_at"] = now
 
     result = await db.listings.insert_one(listing)
     return {"message": "Listing created", "listing_id": str(result.inserted_id)}
@@ -64,12 +66,13 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         {"$inc": {"wallet_balance": -price}}
     )
 
+    now = datetime.now(timezone.utc)
     await db.wallet_history.insert_one({
         "user_id": user.id,
         "type": "debit",
         "amount": price,
         "ref_note": f"Purchased listing: {listing['title']}",
-        "timestamp": datetime.utcnow()
+        "timestamp": now
     })
 
     # Mark listing as sold
@@ -79,7 +82,7 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
             "$set": {
                 "is_sold": True,
                 "buyer_id": user.id,
-                "updated_at": datetime.utcnow()
+                "updated_at": now
             }
         }
     )
@@ -165,13 +168,20 @@ async def update_listing(
     if str(listing["posted_by"]) != str(user.id):
         raise HTTPException(status_code=403, detail="You are not allowed to update this listing")
 
-    update_dict = {k: v for k, v in update_data.dict().items() if v is not None}
-    update_dict["updated_at"] = datetime.utcnow()
+    # Use .model_dump() with exclude_unset=True. This is the modern equivalent
+    # of filtering for non-None values and only includes fields explicitly
+    # sent in the request payload.
+    update_dict = update_data.model_dump(exclude_unset=True)
+    
+    # Only update if there's actually data to update
+    if update_dict:
+        # Use timezone-aware UTC datetime for the update timestamp
+        update_dict["updated_at"] = datetime.now(timezone.utc)
 
-    await db.listings.update_one(
-        {"_id": ObjectId(listing_id)},
-        {"$set": update_dict}
-    )
+        await db.listings.update_one(
+            {"_id": ObjectId(listing_id)},
+            {"$set": update_dict}
+        )
 
     return {"message": "Listing updated successfully"}
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.utils.auth import get_current_user
 from app.models.message import MessageCreate, MessageResponse
 from app.database import db
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
@@ -14,7 +14,7 @@ async def send_message(data: MessageCreate, user=Depends(get_current_user)):
         "receiver_id": data.receiver_id,
         "listing_id": data.listing_id,
         "message": data.message,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.now(timezone.utc)
     }
     await db.messages.insert_one(message)
     return {"message": "Message sent successfully"}

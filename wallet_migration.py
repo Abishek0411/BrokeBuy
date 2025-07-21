@@ -1,7 +1,7 @@
 import asyncio
 import nest_asyncio
 from app.database import db
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 nest_asyncio.apply()
@@ -21,7 +21,7 @@ async def migrate_transactions_to_wallet_history():
                 "type": txn.get("type", "credit"),
                 "amount": txn["amount"],
                 "ref_note": txn.get("ref_note", "Top-up"),
-                "timestamp": txn.get("timestamp", datetime.utcnow())
+                "timestamp": txn.get("timestamp", datetime.now(timezone.utc))
             }
 
             await db.wallet_history.insert_one(migrated_doc)

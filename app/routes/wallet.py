@@ -3,7 +3,7 @@ from app.utils.auth import get_current_user
 from app.database import db
 from bson import ObjectId
 from app.models.wallet import WalletAdd, WalletResponse
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
 
@@ -28,7 +28,7 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         "type": "credit",
         "amount": data.amount,
         "ref_note": data.ref_note,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.now(timezone.utc)
     })
 
     return {"message": f"₹{data.amount} added to your wallet"}

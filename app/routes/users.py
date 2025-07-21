@@ -26,7 +26,7 @@ async def get_my_profile(user: TokenUser = Depends(get_current_user)):
 # PUT /users/update - Update own profile
 @router.put("/update", response_model=dict)
 async def update_my_profile(data: UserUpdate, user: TokenUser = Depends(get_current_user)):
-    updates = {k: v for k, v in data.dict().items() if v is not None}
+    updates = data.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No data to update")
     

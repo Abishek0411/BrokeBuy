@@ -14,7 +14,7 @@ class LoginRequest(BaseModel):
 @router.post("/login")
 async def login(data: LoginRequest):
     try:
-        res = requests.post("http://localhost:9000/login", json=data.dict())
+        res = requests.post("http://localhost:9000/login", json=data.model_dump())
         print(f"SRM response: {res.status_code}, {res.text}")
         result = res.json()
 

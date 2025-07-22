@@ -21,7 +21,6 @@ async def admin_delete_listing(
     await db.listings.delete_one({"_id": ObjectId(listing_id)})
     return {"message": f"Listing {listing_id} deleted by admin"}
 
-
 @router.post("/mark-sold/{listing_id}")
 async def admin_mark_sold(
     listing_id: str,

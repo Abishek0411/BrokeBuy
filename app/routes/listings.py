@@ -12,7 +12,10 @@ from typing import List, Optional
 router = APIRouter(prefix="/listings", tags=["Listings"])
 
 @router.post("/create")
-async def create_listing(data: ListingCreate, user: TokenUser = Depends(get_current_user)):
+async def create_listing(
+    data: ListingCreate,
+    user: TokenUser = Depends(get_current_user)
+):
     listing = data.model_dump()
     listing["posted_by"] = user.id
     listing["is_sold"] = False
@@ -20,6 +23,9 @@ async def create_listing(data: ListingCreate, user: TokenUser = Depends(get_curr
     now = datetime.now(timezone.utc)
     listing["created_at"] = now
     listing["updated_at"] = now
+
+    # ✅ Store only public_ids (no raw URLs)
+    listing["images"] = listing.get("images", [])
 
     result = await db.listings.insert_one(listing)
     return {"message": "Listing created", "listing_id": str(result.inserted_id)}

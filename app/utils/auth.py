@@ -13,6 +13,10 @@ class TokenUser(BaseModel):
     role: str
     wallet_balance: float = 0.0
 
+    @property
+    def is_admin(self) -> bool:
+        return self.role.lower() == "admin"
+    
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")  # This is just a dummy path; it's required
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
@@ -21,7 +25,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

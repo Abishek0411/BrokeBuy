@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
-from app.models.listing import ListingCreate, ListingResponse, ListingUpdate
+from app.models.listing import ListingCreate, ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils import cloudinary
 from app.utils.auth import get_current_user
@@ -24,7 +24,6 @@ async def create_listing(data: ListingCreate, user: TokenUser = Depends(get_curr
     result = await db.listings.insert_one(listing)
     return {"message": "Listing created", "listing_id": str(result.inserted_id)}
 
-
 @router.get("/", response_model=List[dict])
 async def get_all_listings():
     listings = await db.listings.find({"is_sold": False}).to_list(length=None)
@@ -40,7 +39,6 @@ async def get_all_listings():
         listing.pop("_id", None)
 
     return listings
-
 
 @router.post("/buy/{listing_id}", response_model=dict)
 async def buy_listing(listing_id: str, user=Depends(get_current_user)):
@@ -133,7 +131,6 @@ async def search_listings(
         listing.pop("_id", None)
     return results
 
-
 @router.get("/", response_model=List[dict])
 async def get_all_listings():
     listings = await db.listings.find({"is_sold": False}).to_list(length=None)
@@ -225,7 +222,6 @@ async def update_listing(
         "updated_images": [get_optimized_image_url(pid) for pid in final_image_ids]
     }
 
-
 @router.delete("/{listing_id}")
 async def delete_listing(
     listing_id: str,
@@ -239,6 +235,85 @@ async def delete_listing(
     if str(listing["posted_by"]) != str(user.id):
         raise HTTPException(status_code=403, detail="You are not allowed to delete this listing")
 
+    # 🧹 Step 1: Delete all images from Cloudinary
+    image_ids = listing.get("images", [])
+    for public_id in image_ids:
+        try:
+            cloudinary.uploader.destroy(public_id)
+        except Exception as e:
+            print(f"⚠️ Failed to delete image: {public_id} — {e}")
+
+    # 🗑️ Step 2: Delete the listing from DB
     await db.listings.delete_one({"_id": ObjectId(listing_id)})
-    
-    return {"message": "Listing deleted successfully"}
+
+    return {
+        "message": "Listing deleted successfully 🗑️",
+        "deleted_image_count": len(image_ids)
+    }
+
+@router.put("/{listing_id}/mark-sold")
+async def mark_listing_as_sold(
+    listing_id: str,
+    user: TokenUser = Depends(get_current_user)
+):
+    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
+
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="You are not allowed to update this listing")
+
+    if listing.get("is_sold", False):
+        return {"message": "This listing is already marked as sold"}
+
+    await db.listings.update_one(
+        {"_id": ObjectId(listing_id)},
+        {
+            "$set": {
+                "is_sold": True,
+                "updated_at": datetime.now(timezone.utc)
+            }
+        }
+    )
+
+    return {"message": "Listing marked as sold ✅"}
+
+@router.put("/mark-available/{listing_id}")
+async def mark_listing_as_available(
+    listing_id: str,
+    user: TokenUser = Depends(get_current_user)
+):
+    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
+
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="You're not allowed to modify this listing")
+
+    if not listing.get("is_sold", False):
+        raise HTTPException(status_code=400, detail="Listing is already available")
+
+    await db.listings.update_one(
+        {"_id": ObjectId(listing_id)},
+        {
+            "$set": {
+                "is_sold": False,
+                "buyer_id": None,
+                "updated_at": datetime.now(timezone.utc)
+            }
+        }
+    )
+
+    return {"message": "Listing marked as available again ✅"}
+
+@router.get("/my-sold-listings", response_model=List[ListingOut])
+async def get_my_sold_listings(user: TokenUser = Depends(get_current_user)):
+    listings_cursor = db.listings.find({
+        "posted_by": user.id,
+        "is_sold": True
+    }).sort("updated_at", -1)
+
+    listings = await listings_cursor.to_list(length=100)
+    return listings

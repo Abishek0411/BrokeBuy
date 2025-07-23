@@ -22,7 +22,7 @@ def get_optimized_image_url(public_id: str) -> str:
     # Use the public_id as-is (includes folder already)
     return (
         f"https://res.cloudinary.com/{os.getenv('CLOUDINARY_CLOUD_NAME')}/image/upload"
-        f"/w_400,c_scale,f_auto,q_auto/{public_id}"
+        f"/w_400,c_scale,f_auto,q_auto/{public_id}"   # Remove "/w_400,c_scale,f_auto,q_auto" for non-transform images
     )
 
 async def upload_image_to_cloudinary(file):

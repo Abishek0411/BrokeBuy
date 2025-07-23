@@ -90,6 +90,7 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
             "$set": {
                 "is_sold": True,
                 "buyer_id": user.id,
+                "sold_at": now,
                 "updated_at": now
             }
         }
@@ -284,7 +285,7 @@ async def mark_listing_as_sold(
     )
 
     return {"message": "Listing marked as sold ✅"}
-
+    
 @router.put("/mark-available/{listing_id}")
 async def mark_listing_as_available(
     listing_id: str,
@@ -323,3 +324,10 @@ async def get_my_sold_listings(user: TokenUser = Depends(get_current_user)):
 
     listings = await listings_cursor.to_list(length=100)
     return listings
+
+# Temporary endpoint to trigger test
+@router.get("/cleanup-test")
+async def trigger_cleanup_test():
+    from app.tasks.image_cleanup import delete_old_listing_images
+    await delete_old_listing_images()
+    return {"message": "Cleanup test triggered"}

@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException, status, Request
+from fastapi import APIRouter, HTTPException, status, Request, Depends
+from fastapi.security import OAuth2PasswordBearer
+from app.utils.auth import get_current_user
+from app.models.user import TokenUser
 from pydantic import BaseModel
 import requests
 from app.database import db
 from app.utils.auth import create_access_token
-import os
+import requests
 
 router = APIRouter()
 
@@ -57,3 +60,14 @@ async def login(data: LoginRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/logout")
+async def logout(user: TokenUser = Depends(get_current_user)):
+    """
+    Logout the user by simply informing the frontend to clear their token.
+    JWT is stateless, so no server-side invalidation unless a token blacklist is used.
+    """
+    return {
+        "message": f"Logout successful for {user.email}. Please clear token on client side.",
+        "status": "ok"
+    }

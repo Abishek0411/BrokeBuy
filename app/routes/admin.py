@@ -110,18 +110,3 @@ async def get_user_wallet_and_history(user_id: str, user: TokenUser = Depends(ge
         "wallet_history": transactions
     }
 
-@router.get("/user-wallet/{user_id}")
-async def get_user_wallet_and_history(user_id: str, user: TokenUser = Depends(get_current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admins only")
-
-    user_data = await db.users.find_one({"_id": ObjectId(user_id)}, {"wallet_balance": 1})
-    if not user_data:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    transactions = await db.wallet_history.find({"user_id": user_id}).sort("timestamp", -1).to_list(length=50)
-    return {
-        "user_id": user_id,
-        "wallet_balance": user_data["wallet_balance"],
-        "wallet_history": transactions
-    }

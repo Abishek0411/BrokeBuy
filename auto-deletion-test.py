@@ -20,7 +20,7 @@ cloudinary.config(
 )
 
 client = AsyncIOMotorClient(MONGO_URI)
-db = client["broke_buy"]  # or whatever your db name is
+db = client["brokebuy"]  # or whatever your db name is
 
 def get_tiny_thumbnail_url(public_id: str) -> str:
     return f"https://res.cloudinary.com/{CLOUD_NAME}/image/upload/w_100,h_100,c_fill,q_10,f_webp/{public_id}.jpg"

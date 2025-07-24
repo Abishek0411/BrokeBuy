@@ -11,6 +11,9 @@ from typing import List, Optional
 
 router = APIRouter(prefix="/listings", tags=["Listings"])
 
+MAX_UPLOAD_SIZE_MB = 10
+MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
 @router.post("/create")
 async def create_listing(
     data: ListingCreate,
@@ -156,14 +159,30 @@ async def get_all_listings():
 
 @router.post("/upload-image", response_model=dict)
 async def upload_image(
-    file: UploadFile = File(...), 
+    file: UploadFile = File(...),
     user: TokenUser = Depends(get_current_user)
 ):
     try:
-        image_url = await upload_image_to_cloudinary(file)
-        return {"image_url": image_url}
+        # Read the file content to check size
+        contents = await file.read()
+        if len(contents) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image too large. Limit is {MAX_UPLOAD_SIZE_MB}MB. Please compress the image and try again."
+            )
+
+        # Reset file pointer before uploading
+        file.file.seek(0)
+
+        # Upload to Cloudinary
+        image_data = await upload_image_to_cloudinary(file)
+        return image_data
+
+    except HTTPException:
+        raise  # Pass on explicitly raised HTTPExceptions
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
 
 @router.get("/{listing_id}", response_model=ListingResponse)
 async def get_listing_by_id(listing_id: str):

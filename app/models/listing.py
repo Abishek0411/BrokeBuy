@@ -15,6 +15,7 @@ class ListingResponse(ListingCreate):
     is_sold: bool = False
     created_at: datetime
     updated_at: datetime
+    is_available: bool
 
 class ListingUpdate(BaseModel):
     title: Optional[str] = None

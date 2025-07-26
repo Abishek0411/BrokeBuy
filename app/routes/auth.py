@@ -21,62 +21,43 @@ class LoginRequest(BaseModel):
 async def login(data: LoginRequest):
     try:
         email = data.account
+        password = data.password
 
-        # ⏪ Check for cached SRM session
-        user = await db.users.find_one({"email": email})
-        srm_token = None
+        # Step 1: Attempt login to SRM always
+        res = requests.post("http://localhost:9000/login", json=data.model_dump())
+        result = res.json()
 
-        if user and "srm_session" in user:
-            srm_data = user["srm_session"]
-            expires_at = srm_data.get("expires_at")
+        if not result.get("authenticated"):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-            if expires_at and datetime.fromisoformat(expires_at) > datetime.now(timezone.utc):
-                srm_token = srm_data["token"]
-                print("✅ Reusing SRM session token")
+        srm_token = result["cookies"]
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=SRM_SESSION_TTL_MINUTES)
 
-        # 🔐 If no valid session, login to SRM
-        if not srm_token:
-            res = requests.post("http://localhost:9000/login", json=data.model_dump())
-            result = res.json()
+        # Step 2: Upsert session in DB
+        await db.users.update_one(
+            {"email": email},
+            {"$set": {
+                "srm_session": {
+                    "token": srm_token,
+                    "expires_at": expires_at.isoformat()
+                }
+            }},
+            upsert=True
+        )
 
-            if not result.get("authenticated"):
-                raise HTTPException(status_code=401, detail="SRM login failed")
-
-            srm_token = result["cookies"]
-            expires_at = datetime.now(timezone.utc) + timedelta(minutes=SRM_SESSION_TTL_MINUTES)
-
-            # Save session to DB regardless of user existence
-            await db.users.update_one(
-                {"email": email},
-                {"$set": {
-                    "srm_session": {
-                        "token": srm_token,
-                        "expires_at": expires_at.isoformat()
-                    }
-                }},
-                upsert=True
-            )
-
-        # Fetch user profile from SRM if first-time login
-        headers = {"X-CSRF-Token": srm_token}
+        # Step 3: If new user, fetch SRM profile
         srm_user = await db.users.find_one({"email": email})
-
-        if not srm_user:
-            # First-time login → Fetch details from /user
+        if not srm_user or not srm_user.get("srm_id"):
+            headers = {"X-CSRF-Token": srm_token}
             profile = requests.get("http://localhost:9000/user", headers=headers).json()
-            srm_id = profile.get("srmId") or result["lookup"]["identifier"]
-            name = profile.get("name")
-            mobile = profile.get("mobile", "")
-            reg_no = profile.get("regNumber", "")
-            photo = profile.get("photoUrl", "")
 
             new_user_data = {
                 "email": email,
-                "srm_id": srm_id,
-                "reg_no": reg_no,
-                "name": name,
-                "phone": mobile,
-                "avatar": photo,
+                "srm_id": profile.get("srmId") or result["lookup"]["identifier"],
+                "reg_no": profile.get("regNumber", ""),
+                "name": profile.get("name"),
+                "phone": profile.get("mobile", ""),
+                "avatar": profile.get("photoUrl", ""),
                 "role": "student",
                 "wallet_balance": 0.0,
                 "srm_session": {
@@ -85,10 +66,14 @@ async def login(data: LoginRequest):
                 }
             }
 
-            insert_result = await db.users.insert_one(new_user_data)
-            srm_user = await db.users.find_one({"_id": insert_result.inserted_id})
+            await db.users.update_one(
+                {"email": email},
+                {"$set": new_user_data},
+                upsert=True
+            )
+            srm_user = await db.users.find_one({"email": email})
 
-        # 🔑 Return JWT
+        # Step 4: Create JWT token
         access_token = create_access_token({
             "sub": str(srm_user["_id"]),
             "email": srm_user["email"],

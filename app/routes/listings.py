@@ -40,11 +40,19 @@ async def get_all_listings():
     for listing in listings:
         listing["id"] = str(listing["_id"])
         listing["posted_by"] = str(listing["posted_by"])
-        
-        # Convert public_ids → optimized URLs
-        image_ids = listing.get("images", [])
-        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
 
+        # 👇 Include seller info if populated from DB
+        seller = await db.users.find_one({"_id": ObjectId(listing["posted_by"])}, {"name": 1, "reg_no": 1})
+        listing["seller"] = {
+            "name": seller.get("name", "Unknown"),
+            "reg_no": seller.get("reg_no", "N/A")
+        }
+
+        # 👇 Default values to avoid undefined errors
+        listing["created_at"] = listing.get("created_at", datetime.utcnow().isoformat())
+        listing["is_available"] = not listing.get("is_sold", False)
+
+        listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
         listing.pop("_id", None)
 
     return listings
@@ -141,22 +149,6 @@ async def search_listings(
         listing.pop("_id", None)
     return results
 
-@router.get("/", response_model=List[dict])
-async def get_all_listings():
-    listings = await db.listings.find({"is_sold": False}).to_list(length=None)
-
-    for listing in listings:
-        listing["id"] = str(listing["_id"])
-        listing["posted_by"] = str(listing["posted_by"])
-        
-        # Convert public_ids → optimized URLs
-        image_ids = listing.get("images", [])
-        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
-
-        listing.pop("_id", None)
-
-    return listings
-
 @router.post("/upload-image", response_model=dict)
 async def upload_image(
     file: UploadFile = File(...),
@@ -182,6 +174,27 @@ async def upload_image(
         raise  # Pass on explicitly raised HTTPExceptions
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.get("/my-listings", response_model=List[ListingResponse])
+async def get_my_listings(user: TokenUser = Depends(get_current_user)):
+    print("📌 Current user ID:", user.id)  # Add this
+    listings = await db.listings.find({"posted_by": user.id}).to_list(length=None)
+    result = []
+    for listing in listings:
+        listing["id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing.get("posted_by", ""))
+        listing["buyer_id"] = str(listing.get("buyer_id", ""))
+        listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc).isoformat())
+        listing["is_available"] = not listing.get("is_sold", False)
+        listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
+        
+        # 🛠️ Add missing fields for frontend
+        listing["views"] = listing.get("views", 0)
+        listing["interested_users"] = len(listing.get("interested", [])) if "interested" in listing else 0
+
+        result.append(ListingResponse(**listing))
+
+    return result
 
 
 @router.get("/{listing_id}", response_model=ListingResponse)

@@ -196,6 +196,41 @@ async def get_my_listings(user: TokenUser = Depends(get_current_user)):
 
     return result
 
+@router.get("/recent", response_model=List[ListingResponse])
+async def get_recent_listings(limit: int = 3):
+    listings_cursor = db.listings.find({"is_sold": False}).sort("created_at", -1).limit(limit)
+    listings = await listings_cursor.to_list(length=limit)
+
+    result = []
+    for listing in listings:
+        listing["id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing.get("posted_by", ""))
+        listing["buyer_id"] = str(listing.get("buyer_id", ""))
+
+        # Convert image public IDs to URLs
+        image_ids = listing.get("images", [])
+        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+
+        # Fetch seller info (optional but useful)
+        seller = await db.users.find_one(
+            {"_id": ObjectId(listing["posted_by"])},
+            {"name": 1, "reg_no": 1}
+        )
+        if seller:
+            listing["seller_name"] = seller.get("name", "Unknown")
+            listing["seller_reg_no"] = seller.get("reg_no", "N/A")
+        else:
+            listing["seller_name"] = "Unknown"
+            listing["seller_reg_no"] = "N/A"
+
+        listing["is_available"] = not listing.get("is_sold", False)
+        listing["created_at"] = listing.get("created_at", datetime.utcnow().isoformat())
+        listing["views"] = listing.get("views", 0)
+        listing["interested_users"] = len(listing.get("interested", [])) if "interested" in listing else 0
+
+        result.append(ListingResponse(**listing))
+
+    return result
 
 @router.get("/{listing_id}", response_model=ListingResponse)
 async def get_listing_by_id(listing_id: str):

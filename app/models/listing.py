@@ -16,6 +16,8 @@ class ListingResponse(ListingCreate):
     created_at: datetime
     updated_at: datetime
     is_available: bool
+    seller_name: Optional[str] = None
+    seller_reg_no: Optional[str] = None
 
 class ListingUpdate(BaseModel):
     title: Optional[str] = None

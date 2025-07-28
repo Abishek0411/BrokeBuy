@@ -1,3 +1,4 @@
+import asyncio
 import cloudinary
 import cloudinary.uploader
 import os
@@ -15,21 +16,33 @@ CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
 BASE_URL = f"https://res.cloudinary.com/{CLOUD_NAME}/image/upload"
 
 def get_optimized_image_url(public_id: str) -> str:
-    # If it's already a full URL, return as is
-    if public_id.startswith("http://") or public_id.startswith("https://"):
+    if public_id.startswith("http"):
         return public_id
+    
+    # Construct the URL with transformations
+    transformations = "w_400,c_scale,f_auto,q_auto"
+    return f"{BASE_URL}/{transformations}/{public_id}"
 
-    # Use the public_id as-is (includes folder already)
-    return (
-        f"https://res.cloudinary.com/{os.getenv('CLOUDINARY_CLOUD_NAME')}/image/upload"
-        f"/w_400,c_scale,f_auto,q_auto/{public_id}"   # Remove "/w_400,c_scale,f_auto,q_auto" for non-transform images
-    )
-
-async def upload_image_to_cloudinary(file):
-    result = cloudinary.uploader.upload(file.file, folder="BrokeBuyListings")
-    public_id = result["public_id"]
-    optimized_url = get_optimized_image_url(public_id)
-    return {
-        "public_id": public_id,
-        "optimized_url": optimized_url
-    }
+# --- Refactored Async Upload Helper ---
+async def upload_image_to_cloudinary(file_contents: bytes):
+    """
+    Runs the synchronous Cloudinary upload function in a separate thread 
+    to avoid blocking the main asyncio event loop.
+    """
+    try:
+        # Use asyncio.to_thread to run the blocking call
+        result = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            file_contents,
+            folder="BrokeBuyListings"
+        )
+        public_id = result["public_id"]
+        optimized_url = get_optimized_image_url(public_id)
+        
+        return {
+            "public_id": public_id,
+            "optimized_url": optimized_url
+        }
+    except Exception as e:
+        # Propagate exceptions to be caught by the endpoint handler
+        raise e

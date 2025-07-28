@@ -155,20 +155,24 @@ async def upload_image(
     user: TokenUser = Depends(get_current_user)
 ):
     try:
-        # Read the file content to check size
+        # 1. Read file into memory ONCE
         contents = await file.read()
+
+        # 2. Check size from the in-memory contents
         if len(contents) > MAX_UPLOAD_SIZE_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail=f"Image too large. Limit is {MAX_UPLOAD_SIZE_MB}MB. Please compress the image and try again."
+                detail=f"Image too large. Limit is {MAX_UPLOAD_SIZE_MB}MB."
             )
 
-        # Reset file pointer before uploading
-        file.file.seek(0)
-
-        # Upload to Cloudinary
-        image_data = await upload_image_to_cloudinary(file)
+        # 3. Call the non-blocking async helper function
+        image_data = await upload_image_to_cloudinary(contents)
         return image_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
     except HTTPException:
         raise  # Pass on explicitly raised HTTPExceptions

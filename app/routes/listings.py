@@ -14,24 +14,61 @@ router = APIRouter(prefix="/listings", tags=["Listings"])
 MAX_UPLOAD_SIZE_MB = 10
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
+
 @router.post("/create")
 async def create_listing(
-    data: ListingCreate,
+    title: str = Form(...),
+    description: str = Form(...),
+    price: float = Form(...),
+    category: str = Form(...),
+    condition: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    images: List[UploadFile] = File([]),
     user: TokenUser = Depends(get_current_user)
 ):
-    listing = data.model_dump()
-    listing["posted_by"] = user.id
-    listing["is_sold"] = False
+    try:
+        public_ids = []
 
-    now = datetime.now(timezone.utc)
-    listing["created_at"] = now
-    listing["updated_at"] = now
+        for file in images:
+            # ⏳ Read file once and check size
+            content = await file.read()
+            if len(content) > MAX_UPLOAD_SIZE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"One of the images is too large. Max allowed is 5MB."
+                )
 
-    # ✅ Store only public_ids (no raw URLs)
-    listing["images"] = listing.get("images", [])
+            # ✅ Upload to Cloudinary
+            uploaded = await upload_image_to_cloudinary(content)
+            public_ids.append(uploaded["public_id"])
 
-    result = await db.listings.insert_one(listing)
-    return {"message": "Listing created", "listing_id": str(result.inserted_id)}
+        # 🧱 Construct listing
+        listing = {
+            "title": title,
+            "description": description,
+            "price": price,
+            "category": category,
+            "condition": condition,
+            "location": location,
+            "images": public_ids,
+            "posted_by": user.id,
+            "is_sold": False,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc)
+        }
+
+        result = await db.listings.insert_one(listing)
+
+        return {
+            "message": "Listing created ✅",
+            "listing_id": str(result.inserted_id),
+            "uploaded_images": public_ids  # optionally return URLs if you want
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to create listing")
 
 @router.get("/", response_model=List[dict])
 async def get_all_listings():
@@ -149,39 +186,8 @@ async def search_listings(
         listing.pop("_id", None)
     return results
 
-@router.post("/upload-image", response_model=dict)
-async def upload_image(
-    file: UploadFile = File(...),
-    user: TokenUser = Depends(get_current_user)
-):
-    try:
-        # 1. Read file into memory ONCE
-        contents = await file.read()
-
-        # 2. Check size from the in-memory contents
-        if len(contents) > MAX_UPLOAD_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Image too large. Limit is {MAX_UPLOAD_SIZE_MB}MB."
-            )
-
-        # 3. Call the non-blocking async helper function
-        image_data = await upload_image_to_cloudinary(contents)
-        return image_data
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-    except HTTPException:
-        raise  # Pass on explicitly raised HTTPExceptions
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
 @router.get("/my-listings", response_model=List[ListingResponse])
 async def get_my_listings(user: TokenUser = Depends(get_current_user)):
-    print("📌 Current user ID:", user.id)  # Add this
     listings = await db.listings.find({"posted_by": user.id}).to_list(length=None)
     result = []
     for listing in listings:
@@ -189,12 +195,19 @@ async def get_my_listings(user: TokenUser = Depends(get_current_user)):
         listing["posted_by"] = str(listing.get("posted_by", ""))
         listing["buyer_id"] = str(listing.get("buyer_id", ""))
         listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc).isoformat())
+        listing["updated_at"] = listing.get("updated_at", datetime.now(timezone.utc).isoformat())
         listing["is_available"] = not listing.get("is_sold", False)
         listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
         
         # 🛠️ Add missing fields for frontend
         listing["views"] = listing.get("views", 0)
         listing["interested_users"] = len(listing.get("interested", [])) if "interested" in listing else 0
+
+        # Optional fields
+        listing["condition"] = listing.get("condition")
+        listing["location"] = listing.get("location")
+        listing["seller_name"] = user.email.split('@')[0].title()  # fallback
+        listing["seller_reg_no"] = "Private"
 
         result.append(ListingResponse(**listing))
 
@@ -210,27 +223,25 @@ async def get_recent_listings(limit: int = 3):
         listing["id"] = str(listing["_id"])
         listing["posted_by"] = str(listing.get("posted_by", ""))
         listing["buyer_id"] = str(listing.get("buyer_id", ""))
+        listing["is_available"] = not listing.get("is_sold", False)
+        listing["created_at"] = listing.get("created_at", datetime.utcnow())
+        listing["updated_at"] = listing.get("updated_at", datetime.utcnow())
+        listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
 
-        # Convert image public IDs to URLs
-        image_ids = listing.get("images", [])
-        listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+        listing["condition"] = listing.get("condition")
+        listing["location"] = listing.get("location")
 
-        # Fetch seller info (optional but useful)
-        seller = await db.users.find_one(
-            {"_id": ObjectId(listing["posted_by"])},
-            {"name": 1, "reg_no": 1}
-        )
-        if seller:
-            listing["seller_name"] = seller.get("name", "Unknown")
-            listing["seller_reg_no"] = seller.get("reg_no", "N/A")
-        else:
+        # Lookup seller info
+        try:
+            seller = await db.users.find_one(
+                {"_id": ObjectId(listing["posted_by"])},
+                {"name": 1, "reg_no": 1}
+            )
+            listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
+            listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
+        except:
             listing["seller_name"] = "Unknown"
             listing["seller_reg_no"] = "N/A"
-
-        listing["is_available"] = not listing.get("is_sold", False)
-        listing["created_at"] = listing.get("created_at", datetime.utcnow().isoformat())
-        listing["views"] = listing.get("views", 0)
-        listing["interested_users"] = len(listing.get("interested", [])) if "interested" in listing else 0
 
         result.append(ListingResponse(**listing))
 
@@ -241,14 +252,27 @@ async def get_listing_by_id(listing_id: str):
     listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
-    
+
     listing["id"] = str(listing["_id"])
     listing["posted_by"] = str(listing.get("posted_by", ""))
     listing["buyer_id"] = str(listing.get("buyer_id", ""))
-    
-    # Convert public_ids → optimized URLs
-    image_ids = listing.get("images", [])
-    listing["images"] = [get_optimized_image_url(pid) for pid in image_ids]
+    listing["is_available"] = not listing.get("is_sold", False)
+    listing["created_at"] = listing.get("created_at", datetime.utcnow())
+    listing["updated_at"] = listing.get("updated_at", datetime.utcnow())
+    listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
+    listing["condition"] = listing.get("condition")
+    listing["location"] = listing.get("location")
+
+    try:
+        seller = await db.users.find_one(
+            {"_id": ObjectId(listing["posted_by"])},
+            {"name": 1, "reg_no": 1}
+        )
+        listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
+        listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
+    except:
+        listing["seller_name"] = "Unknown"
+        listing["seller_reg_no"] = "N/A"
 
     return ListingResponse(**listing)
 
@@ -329,9 +353,12 @@ async def delete_listing(
         "deleted_image_count": len(image_ids)
     }
 
-@router.put("/{listing_id}/mark-sold")
-async def mark_listing_as_sold(
+@router.put("/{listing_id}")
+async def update_listing(
     listing_id: str,
+    update_data: ListingUpdate = Depends(),  # the base metadata updates
+    images_to_keep: List[str] = Form([]),    # `public_id`s from frontend
+    new_images: List[UploadFile] = File([]), # new files to upload
     user: TokenUser = Depends(get_current_user)
 ):
     listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
@@ -342,21 +369,38 @@ async def mark_listing_as_sold(
     if str(listing["posted_by"]) != str(user.id):
         raise HTTPException(status_code=403, detail="You are not allowed to update this listing")
 
-    if listing.get("is_sold", False):
-        return {"message": "This listing is already marked as sold"}
+    # Handle image update logic
+    existing_ids = listing.get("images", [])
+    
+    # 1. Delete removed public_ids from Cloudinary
+    to_delete = list(set(existing_ids) - set(images_to_keep))
+    for public_id in to_delete:
+        cloudinary.uploader.destroy(public_id)
+
+    # 2. Upload new images to Cloudinary
+    new_image_ids = []
+    for image in new_images:
+        uploaded = await upload_image_to_cloudinary(image)
+        new_image_ids.append(uploaded["public_id"])
+
+    # 3. Final image list = kept + new
+    final_image_ids = images_to_keep + new_image_ids
+
+    # 4. Apply metadata updates
+    update_dict = update_data.model_dump(exclude_unset=True)
+    update_dict["images"] = final_image_ids
+    update_dict["updated_at"] = datetime.now(timezone.utc)
 
     await db.listings.update_one(
         {"_id": ObjectId(listing_id)},
-        {
-            "$set": {
-                "is_sold": True,
-                "updated_at": datetime.now(timezone.utc)
-            }
-        }
+        {"$set": update_dict}
     )
 
-    return {"message": "Listing marked as sold ✅"}
-    
+    return {
+        "message": "Listing updated successfully ✅",
+        "updated_images": [get_optimized_image_url(pid) for pid in final_image_ids]
+    }
+
 @router.put("/mark-available/{listing_id}")
 async def mark_listing_as_available(
     listing_id: str,

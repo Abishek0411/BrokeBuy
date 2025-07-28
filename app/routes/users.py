@@ -30,7 +30,6 @@ async def get_my_profile(user: TokenUser = Depends(get_current_user)):
         role=user_doc.get("role", "student")
     )
 
-
 # PUT /users/update - Update own profile
 @router.put("/update", response_model=dict)
 async def update_my_profile(data: UserUpdate, user: TokenUser = Depends(get_current_user)):

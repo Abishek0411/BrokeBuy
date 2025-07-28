@@ -4,6 +4,7 @@ from app.database import db
 from bson import ObjectId
 from app.models.wallet import WalletAdd, WalletResponse
 from datetime import datetime, timezone
+from pymongo.errors import PyMongoError
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
 
@@ -18,18 +19,30 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
     if data.amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid top-up amount")
 
-    await db.users.update_one(
-        {"_id": ObjectId(user.id)},
-        {"$inc": {"wallet_balance": data.amount}}
-    )
+    # Start a client session for the transaction
+    async with await db.start_session() as s:
+        # Start a transaction
+        async with s.start_transaction():
+            try:
+                # Perform both operations within the transaction
+                await db.users.update_one(
+                    {"_id": ObjectId(user.id)},
+                    {"$inc": {"wallet_balance": data.amount}},
+                    session=s
+                )
 
-    await db.wallet_history.insert_one({
-        "user_id": ObjectId(user.id),
-        "type": "credit",
-        "amount": data.amount,
-        "ref_note": data.ref_note,
-        "timestamp": datetime.now(timezone.utc)
-    })
+                await db.wallet_history.insert_one({
+                    "user_id": ObjectId(user.id),
+                    "type": "credit",
+                    "amount": data.amount,
+                    "ref_note": data.ref_note,
+                    "timestamp": datetime.now(timezone.utc)
+                }, session=s)
+
+            except PyMongoError as e:
+                # The transaction will be automatically aborted on an error
+                print(f"Transaction failed: {e}")
+                raise HTTPException(status_code=500, detail="Wallet top-up failed.")
 
     return {"message": f"₹{data.amount} added to your wallet"}
 

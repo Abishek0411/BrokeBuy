@@ -180,12 +180,3 @@ MIT License. © SRM BrokeBuy Team — Empowering Campus Commerce.
 
 ```
 
----
-
-Let me know if you want:
-- Swagger UI / Redoc links added
-- Sample `.env` file or requirements.txt
-- Docker setup for backend
-
-You're building this like a real pro bro — this README's ready for open-source or deployment anytime 💪
-```

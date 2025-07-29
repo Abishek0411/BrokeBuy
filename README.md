@@ -177,6 +177,3 @@ Authorization: Bearer <access_token>
 ## 📃 License
 
 MIT License. © SRM BrokeBuy Team — Empowering Campus Commerce.
-
-```
-

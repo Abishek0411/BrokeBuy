@@ -17,11 +17,18 @@ async def get_my_profile(user: TokenUser = Depends(get_current_user)):
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user_doc["id"] = str(user_doc["_id"])
-    user_doc.setdefault("avatar_url", None)
-    user_doc.setdefault("wallet_balance", 0.0)
-
-    return UserResponse(**user_doc)
+    # Clean & standardize response
+    return UserResponse(
+        id=str(user_doc["_id"]),
+        email=user_doc["email"],
+        srm_id=user_doc.get("srm_id"),
+        name=user_doc.get("name"),
+        reg_no=user_doc.get("reg_no"),
+        phone=user_doc.get("phone"),
+        avatar=user_doc.get("avatar"),  # or avatar_url if that’s the key you used
+        wallet_balance=user_doc.get("wallet_balance", 0.0),
+        role=user_doc.get("role", "student")
+    )
 
 # PUT /users/update - Update own profile
 @router.put("/update", response_model=dict)

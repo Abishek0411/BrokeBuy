@@ -3,11 +3,14 @@ from typing import Optional, Union
 
 class UserResponse(BaseModel):
     id: str
-    name: str
     email: EmailStr
-    avatar_url: Optional[str]
+    srm_id: Optional[str]
+    name: Optional[str]
+    reg_no: Optional[str]
+    phone: Optional[str]
+    avatar: Optional[str]
+    wallet_balance: float = 0.0
     role: str
-    wallet_balance: float
 
 class UserUpdate(BaseModel):
     name: Optional[str]

@@ -148,6 +148,37 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
 
     return {"message": "Listing purchased successfully ✅"}
 
+@router.get("/purchased", response_model=List[ListingResponse])
+async def get_purchased_listings(user: TokenUser = Depends(get_current_user)):
+    listings = await db.listings.find({"buyer_id": user.id}).to_list(length=None)
+
+    result = []
+    for listing in listings:
+        listing["id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing.get("posted_by", ""))
+        listing["buyer_id"] = str(listing.get("buyer_id", ""))
+        listing["is_available"] = not listing.get("is_sold", False)
+        listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc))
+        listing["updated_at"] = listing.get("updated_at", datetime.now(timezone.utc))
+        listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
+        listing["condition"] = listing.get("condition")
+        listing["location"] = listing.get("location")
+
+        try:
+            seller = await db.users.find_one(
+                {"_id": ObjectId(listing["posted_by"])},
+                {"name": 1, "reg_no": 1}
+            )
+            listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
+            listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
+        except:
+            listing["seller_name"] = "Unknown"
+            listing["seller_reg_no"] = "N/A"
+
+        result.append(ListingResponse(**listing))
+
+    return result
+
 @router.get("/search")
 async def search_listings(
     category: Optional[str] = None,

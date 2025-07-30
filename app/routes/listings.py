@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from app.models.listing import ListingCreate, ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils import cloudinary
 from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.database import db
+from cloudinary import uploader
 from datetime import datetime, timezone
 from bson import ObjectId
 from typing import List, Optional
@@ -340,7 +342,7 @@ async def delete_listing(
     image_ids = listing.get("images", [])
     for public_id in image_ids:
         try:
-            cloudinary.uploader.destroy(public_id)
+            await asyncio.to_thread(uploader.destroy, public_id)
         except Exception as e:
             print(f"⚠️ Failed to delete image: {public_id} — {e}")
 

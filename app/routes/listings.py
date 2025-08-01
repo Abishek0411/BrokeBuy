@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from app.models.listing import ListingCreate, ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils import cloudinary
@@ -73,24 +73,37 @@ async def create_listing(
         raise HTTPException(status_code=500, detail="Failed to create listing")
 
 @router.get("/", response_model=List[dict])
-async def get_all_listings():
-    listings = await db.listings.find({"is_sold": False}).to_list(length=None)
+async def get_all_listings(
+    page: int = 1,
+    limit: int = 20
+):
+    skip = (page - 1) * limit
+    listings_cursor = db.listings.find({"is_sold": False}).skip(skip).limit(limit)
+    listings = await listings_cursor.to_list(length=limit)
 
-    for listing in listings:
-        listing["id"] = str(listing["_id"])
-        listing["posted_by"] = str(listing["posted_by"])
+    # Step 1: Collect all seller IDs
+    seller_ids = list(set(str(listing["posted_by"]) for listing in listings))
+    sellers = await db.users.find(
+        {"_id": {"$in": [ObjectId(uid) for uid in seller_ids]}},
+        {"name": 1, "reg_no": 1}
+    ).to_list(None)
 
-        # 👇 Include seller info if populated from DB
-        seller = await db.users.find_one({"_id": ObjectId(listing["posted_by"])}, {"name": 1, "reg_no": 1})
-        listing["seller"] = {
+    # Step 2: Build seller lookup map
+    seller_map = {
+        str(seller["_id"]): {
             "name": seller.get("name", "Unknown"),
             "reg_no": seller.get("reg_no", "N/A")
         }
+        for seller in sellers
+    }
 
-        # 👇 Default values to avoid undefined errors
+    # Step 3: Enrich listings
+    for listing in listings:
+        listing["id"] = str(listing["_id"])
+        listing["posted_by"] = str(listing["posted_by"])
+        listing["seller"] = seller_map.get(listing["posted_by"], {"name": "Unknown", "reg_no": "N/A"})
         listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc).isoformat())
         listing["is_available"] = not listing.get("is_sold", False)
-
         listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
         listing.pop("_id", None)
 
@@ -150,9 +163,32 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
 
 @router.get("/purchased", response_model=List[ListingResponse])
 async def get_purchased_listings(user: TokenUser = Depends(get_current_user)):
-    listings = await db.listings.find({"buyer_id": user.id}).to_list(length=None)
+    pipeline = [
+        {"$match": {"buyer_id": user.id}},
+        {"$addFields": {
+            "posted_by_obj": {
+                "$cond": {
+                    "if": {"$ne": ["$posted_by", None]},
+                    "then": {"$toObjectId": "$posted_by"},
+                    "else": None
+                }
+            }
+        }},
+        {"$lookup": {
+            "from": "users",
+            "localField": "posted_by_obj",
+            "foreignField": "_id",
+            "as": "seller_info"
+        }},
+        {"$unwind": {
+            "path": "$seller_info",
+            "preserveNullAndEmptyArrays": True
+        }}
+    ]
 
+    listings = await db.listings.aggregate(pipeline).to_list(length=None)
     result = []
+
     for listing in listings:
         listing["id"] = str(listing["_id"])
         listing["posted_by"] = str(listing.get("posted_by", ""))
@@ -164,16 +200,9 @@ async def get_purchased_listings(user: TokenUser = Depends(get_current_user)):
         listing["condition"] = listing.get("condition")
         listing["location"] = listing.get("location")
 
-        try:
-            seller = await db.users.find_one(
-                {"_id": ObjectId(listing["posted_by"])},
-                {"name": 1, "reg_no": 1}
-            )
-            listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
-            listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
-        except:
-            listing["seller_name"] = "Unknown"
-            listing["seller_reg_no"] = "N/A"
+        seller = listing.get("seller_info", {})
+        listing["seller_name"] = seller.get("name", "Unknown")
+        listing["seller_reg_no"] = seller.get("reg_no", "N/A")
 
         result.append(ListingResponse(**listing))
 
@@ -298,13 +327,17 @@ async def get_listing_by_id(listing_id: str):
     listing["location"] = listing.get("location")
     listing["is_sold"] = listing.get("is_sold", False)
 
-    # Optional seller info
-    seller = await db.users.find_one(
-        {"_id": ObjectId(listing["posted_by"])},
-        {"name": 1, "reg_no": 1}
-    )
-    listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
-    listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
+    # ✅ Inject seller_name and seller_reg_no for existing response model
+    try:
+        seller = await db.users.find_one(
+            {"_id": ObjectId(listing["posted_by"])},
+            {"name": 1, "reg_no": 1}
+        )
+        listing["seller_name"] = seller.get("name", "Unknown") if seller else "Unknown"
+        listing["seller_reg_no"] = seller.get("reg_no", "N/A") if seller else "N/A"
+    except Exception:
+        listing["seller_name"] = "Unknown"
+        listing["seller_reg_no"] = "N/A"
 
     return ListingResponse(**listing)
 

@@ -85,7 +85,6 @@ async def get_all_listings(
         "listings": listings
     }
 
-
 @router.get("/listings/user/{user_id}")
 async def get_listings_by_user(user_id: str, user: TokenUser = Depends(get_current_user)):
     if not user.is_admin:

@@ -75,10 +75,15 @@ async def create_listing(
 @router.get("/", response_model=List[dict])
 async def get_all_listings(
     page: int = 1,
-    limit: int = 20
+    limit: int = 20,
+    include_sold: bool = False  # ✅ optional toggle
 ):
     skip = (page - 1) * limit
-    listings_cursor = db.listings.find({"is_sold": False}).skip(skip).limit(limit)
+
+    # ✅ Dynamically build query based on flag
+    query = {} if include_sold else {"is_sold": False}
+
+    listings_cursor = db.listings.find(query).skip(skip).limit(limit)
     listings = await listings_cursor.to_list(length=limit)
 
     # Step 1: Collect all seller IDs
@@ -104,6 +109,7 @@ async def get_all_listings(
         listing["seller"] = seller_map.get(listing["posted_by"], {"name": "Unknown", "reg_no": "N/A"})
         listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc).isoformat())
         listing["is_available"] = not listing.get("is_sold", False)
+        listing["is_sold"] = listing.get("is_sold", False)  # ✅ ensure always defined
         listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
         listing.pop("_id", None)
 

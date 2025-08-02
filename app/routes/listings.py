@@ -495,6 +495,34 @@ async def mark_listing_as_available(
 
     return {"message": "Listing marked as available again ✅"}
 
+@router.put("/mark-unavailable/{listing_id}")
+async def mark_listing_as_unavailable(
+    listing_id: str,
+    user: TokenUser = Depends(get_current_user)
+):
+    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
+
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="You're not allowed to modify this listing")
+
+    if listing.get("is_sold", False):
+        raise HTTPException(status_code=400, detail="Listing is already marked as unavailable")
+
+    await db.listings.update_one(
+        {"_id": ObjectId(listing_id)},
+        {
+            "$set": {
+                "is_sold": True,
+                "updated_at": datetime.now(timezone.utc)
+            }
+        }
+    )
+
+    return {"message": "Listing marked as unavailable ✅"}
+
 @router.get("/my-sold-listings", response_model=List[ListingOut])
 async def get_my_sold_listings(user: TokenUser = Depends(get_current_user)):
     listings_cursor = db.listings.find({

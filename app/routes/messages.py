@@ -34,13 +34,13 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     await db.messages.insert_one(message)
     return {"message": "Message sent successfully"}
 
-@router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse) # Use new model
+@router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse)
 async def get_chat(listing_id: str, receiver_id: str, user: TokenUser = Depends(get_current_user)):
     sender_obj_id = ObjectId(user.id)
     receiver_obj_id = ObjectId(receiver_id)
     listing_obj_id = ObjectId(listing_id)
 
-    # 1. Fetch the messages (your existing logic is perfect)
+    # Step 1: Fetch the messages
     messages_cursor = db.messages.find({
         "$or": [
             {"sender_id": sender_obj_id, "receiver_id": receiver_obj_id},
@@ -48,15 +48,28 @@ async def get_chat(listing_id: str, receiver_id: str, user: TokenUser = Depends(
         ],
         "listing_id": listing_obj_id
     }).sort("timestamp", 1)
-    
+
     messages = await messages_cursor.to_list(length=None)
+
+    # Step 2: Mark unread messages sent by the other person as read
+    await db.messages.update_many(
+        {
+            "sender_id": receiver_obj_id,
+            "receiver_id": sender_obj_id,
+            "listing_id": listing_obj_id,
+            "is_read": {"$ne": True}
+        },
+        {"$set": {"is_read": True}}
+    )
+
+    # Step 3: Format messages
     for msg in messages:
         msg['id'] = str(msg['_id'])
         msg['sender_id'] = str(msg['sender_id'])
         msg['receiver_id'] = str(msg['receiver_id'])
         msg['listing_id'] = str(msg['listing_id'])
 
-    # 2. Fetch the other user's details
+    # Step 4: Fetch user info
     other_user_doc = await db.users.find_one({"_id": receiver_obj_id})
     if not other_user_doc:
         raise HTTPException(status_code=404, detail="Chat partner not found")
@@ -68,7 +81,6 @@ async def get_chat(listing_id: str, receiver_id: str, user: TokenUser = Depends(
         "reg_no": other_user_doc.get("reg_no")
     }
 
-    # 3. Return both in the new response structure
     return {
         "messages": messages,
         "other_user": other_user_data

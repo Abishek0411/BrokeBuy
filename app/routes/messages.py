@@ -34,42 +34,53 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     await db.messages.insert_one(message)
     return {"message": "Message sent successfully"}
 
+from fastapi import APIRouter, Depends, HTTPException, Query # Import Query
+
+# ... other imports, models, etc.
+
 @router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse)
-async def get_chat(listing_id: str, receiver_id: str, user: TokenUser = Depends(get_current_user)):
+async def get_chat(
+    listing_id: str, 
+    receiver_id: str, 
+    user: TokenUser = Depends(get_current_user),
+    # Add pagination parameters
+    skip: int = 0,
+    limit: int = Query(default=50, lte=100)
+):
     sender_obj_id = ObjectId(user.id)
     receiver_obj_id = ObjectId(receiver_id)
     listing_obj_id = ObjectId(listing_id)
 
-    # Step 1: Fetch the messages
+    # Step 1: Fetch a 'page' of messages
     messages_cursor = db.messages.find({
         "$or": [
             {"sender_id": sender_obj_id, "receiver_id": receiver_obj_id},
             {"sender_id": receiver_obj_id, "receiver_id": sender_obj_id}
         ],
         "listing_id": listing_obj_id
-    }).sort("timestamp", 1)
+    }).sort("timestamp", -1).skip(skip).limit(limit) # Sort descending and paginate
 
-    messages = await messages_cursor.to_list(length=None)
+    # Use the limit parameter here
+    messages = await messages_cursor.to_list(length=limit)
+    messages.reverse() # Reverse to show oldest first in the chunk
 
-    # Step 2: Mark unread messages sent by the other person as read
+    # Step 2: Mark unread messages as read (this is fine as is)
+    # This operation is quick and should run on all unread messages in the chat, not just the page.
     await db.messages.update_many(
         {
-            "sender_id": receiver_obj_id,
-            "receiver_id": sender_obj_id,
-            "listing_id": listing_obj_id,
-            "is_read": {"$ne": True}
+            "sender_id": receiver_obj_id, "receiver_id": sender_obj_id,
+            "listing_id": listing_obj_id, "is_read": {"$ne": True}
         },
         {"$set": {"is_read": True}}
     )
 
-    # Step 3: Format messages
+    # Step 3 & 4 remain the same...
     for msg in messages:
         msg['id'] = str(msg['_id'])
         msg['sender_id'] = str(msg['sender_id'])
         msg['receiver_id'] = str(msg['receiver_id'])
         msg['listing_id'] = str(msg['listing_id'])
 
-    # Step 4: Fetch user info
     other_user_doc = await db.users.find_one({"_id": receiver_obj_id})
     if not other_user_doc:
         raise HTTPException(status_code=404, detail="Chat partner not found")

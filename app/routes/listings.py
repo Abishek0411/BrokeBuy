@@ -374,7 +374,7 @@ async def update_listing(
     # 2. Upload new images to Cloudinary
     new_image_ids = []
     for image in new_images:
-        uploaded = await upload_image_to_cloudinary(image)
+        uploaded = await upload_image_to_cloudinary(await image.read())
         new_image_ids.append(uploaded["public_id"])
 
     # 3. Final image list = kept + new

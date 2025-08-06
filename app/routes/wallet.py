@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.utils.auth import get_current_user
-from app.database import db
+from app.database import db, client
 from bson import ObjectId
 from app.models.wallet import WalletAdd, WalletResponse
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Invalid top-up amount")
 
     # Start a client session for the transaction
-    async with await db.start_session() as s:
+    async with await client.start_session() as s:
         # Start a transaction
         async with s.start_transaction():
             try:

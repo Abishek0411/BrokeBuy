@@ -8,6 +8,8 @@ MONGO_URI = os.getenv("MONGO_URI")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client["brokebuy"]
 
+__all__ = ["client", "db"]
+
 try:
     client.admin.command('ping')
     print("MongoDB connection successful")

@@ -369,7 +369,7 @@ async def update_listing(
     # 1. Delete removed public_ids from Cloudinary
     to_delete = list(set(existing_ids) - set(images_to_keep))
     for public_id in to_delete:
-        cloudinary.uploader.destroy(public_id)
+        uploader.destroy(public_id)
 
     # 2. Upload new images to Cloudinary
     new_image_ids = []
@@ -422,54 +422,6 @@ async def delete_listing(
     return {
         "message": "Listing deleted successfully 🗑️",
         "deleted_image_count": len(image_ids)
-    }
-
-@router.put("/{listing_id}")
-async def update_listing(
-    listing_id: str,
-    update_data: ListingUpdate = Depends(),  # the base metadata updates
-    images_to_keep: List[str] = Form([]),    # `public_id`s from frontend
-    new_images: List[UploadFile] = File([]), # new files to upload
-    user: TokenUser = Depends(get_current_user)
-):
-    listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
-
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found")
-
-    if str(listing["posted_by"]) != str(user.id):
-        raise HTTPException(status_code=403, detail="You are not allowed to update this listing")
-
-    # Handle image update logic
-    existing_ids = listing.get("images", [])
-    
-    # 1. Delete removed public_ids from Cloudinary
-    to_delete = list(set(existing_ids) - set(images_to_keep))
-    for public_id in to_delete:
-        cloudinary.uploader.destroy(public_id)
-
-    # 2. Upload new images to Cloudinary
-    new_image_ids = []
-    for image in new_images:
-        uploaded = await upload_image_to_cloudinary(image)
-        new_image_ids.append(uploaded["public_id"])
-
-    # 3. Final image list = kept + new
-    final_image_ids = images_to_keep + new_image_ids
-
-    # 4. Apply metadata updates
-    update_dict = update_data.model_dump(exclude_unset=True)
-    update_dict["images"] = final_image_ids
-    update_dict["updated_at"] = datetime.now(timezone.utc)
-
-    await db.listings.update_one(
-        {"_id": ObjectId(listing_id)},
-        {"$set": update_dict}
-    )
-
-    return {
-        "message": "Listing updated successfully ✅",
-        "updated_images": [get_optimized_image_url(pid) for pid in final_image_ids]
     }
 
 @router.put("/mark-available/{listing_id}")

@@ -2,6 +2,7 @@
 
 Welcome to the **SRM BrokeBuy Backend**, the robust API service powering the SRM campus marketplace. Built with FastAPI and MongoDB, it handles user authentication, listings, transactions, messaging, and more — serving as the heart of the platform.
 
+Link to the frontend repo: https://github.com/Abishek0411/BrokeBuy-Frontend
 ---
 
 ## 🚀 Tech Stack

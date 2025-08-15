@@ -1,8 +1,7 @@
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from app.models.listing import ListingCreate, ListingResponse, ListingUpdate, ListingOut
+from app.models.listing import ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
-from app.utils import cloudinary
 from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.database import db
@@ -117,6 +116,7 @@ async def get_all_listings(
 
 @router.post("/buy/{listing_id}", response_model=dict)
 async def buy_listing(listing_id: str, user=Depends(get_current_user)):
+    buyer_id = ObjectId(user.id)  # ensure buyer ObjectId
     listing = await db.listings.find_one({"_id": ObjectId(listing_id)})
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
@@ -127,7 +127,7 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     if listing["posted_by"] == user.id:
         raise HTTPException(status_code=400, detail="You can't buy your own listing")
     
-    user_data = await db.users.find_one({"_id": ObjectId(user.id)})
+    user_data = await db.users.find_one({"_id": buyer_id})
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -137,18 +137,36 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     if user_wallet < price:
         raise HTTPException(status_code=400, detail="Insufficient wallet balance")
     
-    # Deduct from wallet
-    await db.users.update_one(
-        {"_id": ObjectId(user.id)},
+    now = datetime.now(timezone.utc)
+
+    # Deduct from buyer wallet
+    result = await db.users.update_one(
+        {"_id": buyer_id},
         {"$inc": {"wallet_balance": -price}}
     )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to deduct from buyer wallet")
 
-    now = datetime.now(timezone.utc)
     await db.wallet_history.insert_one({
-        "user_id": user.id,
+        "user_id": str(buyer_id),
         "type": "debit",
         "amount": price,
         "ref_note": f"Purchased listing: {listing['title']}",
+        "timestamp": now
+    })
+
+    # ✅ Credit seller wallet (IGNORE 30K LIMIT for sales)
+    seller_id = ObjectId(listing["posted_by"])
+    await db.users.update_one(
+        {"_id": seller_id},
+        {"$inc": {"wallet_balance": price}}
+    )
+
+    await db.wallet_history.insert_one({
+        "user_id": str(seller_id),
+        "type": "credit",
+        "amount": price,
+        "ref_note": f"Sold listing: {listing['title']}",
         "timestamp": now
     })
 
@@ -158,7 +176,7 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         {
             "$set": {
                 "is_sold": True,
-                "buyer_id": user.id,
+                "buyer_id": str(buyer_id),
                 "sold_at": now,
                 "updated_at": now
             }

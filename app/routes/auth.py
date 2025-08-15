@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from app.database import db
 from app.utils.auth import create_access_token
 import requests
-from bson import ObjectId
 
 router = APIRouter()
 SRM_SESSION_TTL_MINUTES = 20
@@ -76,7 +75,6 @@ async def login(data: LoginRequest):
                 reg_no = ""
 
                 name_field = profile.get("name")
-
                 if isinstance(name_field, list) and name_field:
                     # Case 1: name is a list of objects
                     raw_name_value = name_field[0].get("text", "")
@@ -93,6 +91,16 @@ async def login(data: LoginRequest):
                 else:
                     raw_name = raw_name_value
 
+                # Wallet balance logic
+                if not user:
+                    # Brand new user → start with 20,000 credits
+                    wallet_balance = 20000.0
+                else:
+                    # Existing user → keep balance as is
+                    wallet_balance = user.get("wallet_balance", 0.0)
+
+                # Enforce max wallet cap of 30,000
+                wallet_balance = min(wallet_balance, 30000.0)
 
                 update_data = {
                     "email": email,
@@ -102,7 +110,7 @@ async def login(data: LoginRequest):
                     "phone": "",  # not available from /profile
                     "avatar": profile.get("photoUrl", ""),
                     "role": "student",
-                    "wallet_balance": user.get("wallet_balance", 0.0) if user else 0.0,
+                    "wallet_balance": wallet_balance,
                     "srm_session": {
                         "token": srm_token,
                         "expires_at": expires_at.isoformat()
@@ -113,7 +121,7 @@ async def login(data: LoginRequest):
                     {"$set": update_data},
                     upsert=True
                 )
-            
+
             final_user = await db.users.find_one({"email": email})
 
             # Step 4: Issue application access token

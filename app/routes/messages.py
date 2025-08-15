@@ -1,8 +1,9 @@
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
-from app.models.message import MessageCreate, MessageResponse, OtherUser, ChatResponse
+from app.utils.cloudinary import get_optimized_image_url
+from app.models.message import MessageCreate, ChatResponse
 from app.database import db
 from datetime import datetime, timezone
 from typing import List
@@ -33,10 +34,6 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     
     await db.messages.insert_one(message)
     return {"message": "Message sent successfully"}
-
-from fastapi import APIRouter, Depends, HTTPException, Query # Import Query
-
-# ... other imports, models, etc.
 
 @router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse)
 async def get_chat(
@@ -92,9 +89,22 @@ async def get_chat(
         "reg_no": other_user_doc.get("reg_no")
     }
 
+    # Step 5: Get listing details (for tagged listing in chat)
+    listing_doc = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing_doc:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    listing_data = {
+        "id": str(listing_doc["_id"]),
+        "title": listing_doc.get("title"),
+        "price": listing_doc.get("price"),
+        "image": get_optimized_image_url(listing_doc["images"][0]) if listing_doc.get("images") else None
+    }
+
     return {
         "messages": messages,
-        "other_user": other_user_data
+        "other_user": other_user_data,
+        "listing": listing_data
     }
 
 @router.get("/conversations", response_model=List[dict])
@@ -102,7 +112,6 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
     user_obj_id = ObjectId(user.id)
 
     pipeline = [
-        # Stage 1: Match all messages involving the current user
         {
             "$match": {
                 "$or": [
@@ -111,16 +120,11 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                 ]
             }
         },
-        # Stage 2: Sort by latest message first to easily find the last message
-        {
-            "$sort": {"timestamp": -1}
-        },
-        # Stage 3: Group messages into unique conversations
+        {"$sort": {"timestamp": -1}},
         {
             "$group": {
                 "_id": {
                     "listing_id": "$listing_id",
-                    # Define the other user in the conversation
                     "other_user_id": {
                         "$cond": {
                             "if": {"$eq": ["$sender_id", user_obj_id]},
@@ -129,10 +133,8 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                         }
                     }
                 },
-                # Get the content of the most recent message
                 "last_message": {"$first": "$message"},
                 "last_message_time": {"$first": "$timestamp"},
-                # Collect all sender IDs and read statuses for unread count
                 "messages_for_unread": {
                     "$push": {
                         "sender_id": "$sender_id",
@@ -141,7 +143,6 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                 }
             }
         },
-        # Stage 4: Join with the 'listings' collection
         {
             "$lookup": {
                 "from": "listings",
@@ -150,7 +151,6 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                 "as": "listing_details"
             }
         },
-        # Stage 5: Join with the 'users' collection to get other user's info
         {
             "$lookup": {
                 "from": "users",
@@ -159,13 +159,11 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                 "as": "other_user_details"
             }
         },
-        # Stage 6: Deconstruct the arrays created by $lookup
         {"$unwind": "$listing_details"},
         {"$unwind": "$other_user_details"},
-        # Stage 7: Reshape the final output to match the frontend's expectation
         {
             "$project": {
-                "_id": 0, # Exclude the default _id field
+                "_id": 0,
                 "listing_id": {"$toString": "$_id.listing_id"},
                 "listing_title": "$listing_details.title",
                 "listing_image": {"$arrayElemAt": ["$listing_details.images", 0]},
@@ -177,7 +175,6 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
                 },
                 "last_message": "$last_message",
                 "last_message_time": "$last_message_time",
-                # Calculate unread count on the server
                 "unread_count": {
                     "$size": {
                         "$filter": {
@@ -197,5 +194,11 @@ async def get_conversations(user: TokenUser = Depends(get_current_user)):
     ]
 
     conversations_cursor = db.messages.aggregate(pipeline)
-    return await conversations_cursor.to_list(length=None)
+    conversations = await conversations_cursor.to_list(length=None)
 
+    # ✅ Optimize images before returning
+    for convo in conversations:
+        if convo.get("listing_image"):
+            convo["listing_image"] = get_optimized_image_url(convo["listing_image"])
+
+    return conversations

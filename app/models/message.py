@@ -20,6 +20,14 @@ class OtherUser(BaseModel):
     avatar: str | None
     reg_no: str | None
 
+class ListingPreview(BaseModel):
+    id: str
+    title: str
+    price: float
+    image: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     messages: List[MessageResponse]
     other_user: OtherUser
+    listing: ListingPreview  # ✅ Added tagged listing

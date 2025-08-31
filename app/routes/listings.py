@@ -526,7 +526,12 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
 @router.get("/purchased", response_model=List[ListingResponse])
 async def get_purchased_listings(user: TokenUser = Depends(get_current_user)):
     pipeline = [
-        {"$match": {"buyer_id": user.id}},
+        {"$match": {
+            "$or": [
+                {"buyer_id": user.id},
+                {"buyer_id": ObjectId(user.id)}
+            ]
+        }},
         {"$addFields": {
             "posted_by_obj": {
                 "$cond": {

@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from typing import List, Optional
 from app.database import db
-from auth import get_current_user, TokenUser  # your auth dependency
+from app.models.user import TokenUser
+from app.utils.auth import get_current_user
+from app.utils.cloudinary import get_optimized_image_url
 
-router = APIRouter()
+
+router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 class NotificationCreate(BaseModel):
     type: str  # "message" or "buy_request"
@@ -43,17 +46,87 @@ async def create_notification(data: NotificationCreate, user: TokenUser = Depend
     result = await db.notifications.insert_one(notif)
     return {"message": "Notification created", "id": str(result.inserted_id)}
 
-@router.get("/", response_model=List[NotificationResponse])
+@router.get("/")
 async def get_notifications(user: TokenUser = Depends(get_current_user)):
-    """Get all notifications for the logged-in user."""
-    notifs = await db.notifications.find({"receiver_id": ObjectId(user.id)}).sort("timestamp", -1).to_list(length=50)
-    for n in notifs:
-        n["id"] = str(n["_id"])
-        n["sender_id"] = str(n["sender_id"])
-        n["receiver_id"] = str(n["receiver_id"])
-        if n.get("listing_id"):
-            n["listing_id"] = str(n["listing_id"])
-    return notifs
+    """Fetch all notifications for the logged-in user, enriched with listing, buyer, and message details."""
+    cursor = db.notifications.find({"user_id": ObjectId(user.id)}).sort("created_at", -1)
+    notifications = await cursor.to_list(length=None)
+
+    # Collect related IDs
+    listing_ids, buyer_ids, sender_ids = set(), set(), set()
+    for n in notifications:
+        meta = n.get("metadata", {})
+        ntype = n.get("type")
+
+        if ntype == "buy_request":
+            if meta.get("listing_id"):
+                listing_ids.add(ObjectId(meta["listing_id"]))
+            if meta.get("buyer_id"):
+                buyer_ids.add(ObjectId(meta["buyer_id"]))
+
+        elif ntype == "message":
+            if meta.get("sender_id"):
+                sender_ids.add(ObjectId(meta["sender_id"]))
+            if meta.get("listing_id"):
+                listing_ids.add(ObjectId(meta["listing_id"]))
+
+    # Fetch related docs
+    listings = await db.listings.find(
+        {"_id": {"$in": list(listing_ids)}},
+        {"title": 1, "images": 1}
+    ).to_list(None)
+    buyers = await db.users.find(
+        {"_id": {"$in": list(buyer_ids)}},
+        {"name": 1, "reg_no": 1}
+    ).to_list(None)
+    senders = await db.users.find(
+        {"_id": {"$in": list(sender_ids)}},
+        {"name": 1, "avatar": 1}
+    ).to_list(None)
+
+    # Create quick lookup maps
+    listing_map = {str(l["_id"]): l for l in listings}
+    buyer_map = {str(b["_id"]): b for b in buyers}
+    sender_map = {str(s["_id"]): s for s in senders}
+
+    enriched = []
+    for n in notifications:
+        # Normalize base fields
+        n["id"] = str(n.pop("_id"))
+        n["user_id"] = str(n["user_id"])
+        n["created_at"] = n.get("created_at", datetime.now(timezone.utc)).isoformat()
+        meta = n.get("metadata", {})
+        ntype = n.get("type")
+
+        # Enrich based on type
+        if ntype == "buy_request":
+            listing = listing_map.get(meta.get("listing_id"))
+            buyer = buyer_map.get(meta.get("buyer_id"))
+            if listing:
+                meta["listing_title"] = listing.get("title", "Unknown Item")
+                meta["listing_image"] = get_optimized_image_url(
+                    (listing.get("images") or [None])[0]
+                )
+            if buyer:
+                meta["buyer_name"] = buyer.get("name", "Unknown Buyer")
+                meta["buyer_reg_no"] = buyer.get("reg_no", "")
+
+        elif ntype == "message":
+            sender = sender_map.get(meta.get("sender_id"))
+            listing = listing_map.get(meta.get("listing_id"))
+            if sender:
+                meta["sender_name"] = sender.get("name", "Unknown User")
+                meta["sender_avatar"] = sender.get("avatar")
+            if listing:
+                meta["listing_title"] = listing.get("title", "Unknown Listing")
+                meta["listing_image"] = get_optimized_image_url(
+                    (listing.get("images") or [None])[0]
+                )
+
+        n["metadata"] = meta
+        enriched.append(n)
+
+    return {"notifications": enriched}
 
 @router.patch("/{notification_id}/read", response_model=dict)
 async def mark_notification_as_read(notification_id: str, user: TokenUser = Depends(get_current_user)):

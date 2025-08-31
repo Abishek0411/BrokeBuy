@@ -1,10 +1,11 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from app.models.listing import ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.database import db
+from pydantic import BaseModel
 from cloudinary import uploader
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -15,6 +16,53 @@ router = APIRouter(prefix="/listings", tags=["Listings"])
 MAX_UPLOAD_SIZE_MB = 10
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
+def serialize_objectid(value):
+    if isinstance(value, ObjectId):
+        return str(value)
+    elif isinstance(value, list):
+        return [serialize_objectid(v) for v in value]
+    elif isinstance(value, dict):
+        return {k: serialize_objectid(v) for k, v in value.items()}
+    return value
+
+# ---------- Models ----------
+class BuyRequestCreate(BaseModel):
+    # optional note that buyer can send along
+    note: Optional[str] = None
+
+class BuyRequestOut(BaseModel):
+    id: str
+    listing_id: str
+    seller_id: str
+    buyer_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    # extra hydrated fields for UI niceness
+    listing_title: Optional[str] = None
+    listing_image: Optional[str] = None
+    buyer_name: Optional[str] = None
+    buyer_reg_no: Optional[str] = None
+
+# ---------- Helpers ----------
+async def _notify(user_id: ObjectId, ntype: str, title: str, message: str, meta: Optional[dict] = None):
+    """Minimal inline notification insert. If you already have a helper, use that instead."""
+    doc = {
+        "user_id": user_id,
+        "type": ntype,  # "message" | "buy_request" | "system"
+        "title": title,
+        "message": message,
+        "metadata": meta or {},
+        "is_read": False,
+        "created_at": datetime.now(timezone.utc)
+    }
+    await db.notifications.insert_one(doc)
+
+def _oid(val: str) -> ObjectId:
+    try:
+        return ObjectId(val)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId")
 
 @router.post("/create")
 async def create_listing(
@@ -75,11 +123,9 @@ async def create_listing(
 async def get_all_listings(
     page: int = 1,
     limit: int = 20,
-    include_sold: bool = False  # ✅ optional toggle
+    include_sold: bool = False
 ):
     skip = (page - 1) * limit
-
-    # ✅ Dynamically build query based on flag
     query = {} if include_sold else {"is_sold": False}
 
     listings_cursor = db.listings.find(query).skip(skip).limit(limit)
@@ -101,18 +147,310 @@ async def get_all_listings(
         for seller in sellers
     }
 
-    # Step 3: Enrich listings
+    enriched = []
     for listing in listings:
-        listing["id"] = str(listing["_id"])
-        listing["posted_by"] = str(listing["posted_by"])
+        listing = serialize_objectid(listing)  # Convert all ObjectIds → str
+
+        listing["id"] = listing.pop("_id", listing.get("id"))
         listing["seller"] = seller_map.get(listing["posted_by"], {"name": "Unknown", "reg_no": "N/A"})
         listing["created_at"] = listing.get("created_at", datetime.now(timezone.utc).isoformat())
         listing["is_available"] = not listing.get("is_sold", False)
-        listing["is_sold"] = listing.get("is_sold", False)  # ✅ ensure always defined
+        listing["is_sold"] = listing.get("is_sold", False)
         listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
-        listing.pop("_id", None)
 
-    return listings
+        enriched.append(listing)
+
+    return enriched
+
+# ---------- Buy Endpoints ----------
+
+@router.post("/{listing_id}/buy-request", response_model=dict)
+async def create_buy_request(
+    listing_id: str,
+    payload: Optional[BuyRequestCreate] = None,
+    user: TokenUser = Depends(get_current_user),
+):
+    listing_obj_id = _oid(listing_id)
+
+    listing = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    seller_id = listing["posted_by"]
+    if str(seller_id) == str(user.id):
+        raise HTTPException(status_code=400, detail="You cannot request to buy your own listing")
+
+    if listing.get("is_sold"):
+        raise HTTPException(status_code=400, detail="Listing already sold")
+
+    existing = await db.purchase_requests.find_one({
+        "listing_id": listing_obj_id,
+        "buyer_id": _oid(user.id),
+        "status": {"$in": ["pending", "accepted"]}
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="You already have an active request for this listing")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "listing_id": listing_obj_id,
+        "seller_id": seller_id if isinstance(seller_id, ObjectId) else _oid(seller_id),
+        "buyer_id": _oid(user.id),
+        "note": (payload.note if payload and hasattr(payload, "note") else ""),
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+    }
+    res = await db.purchase_requests.insert_one(doc)
+
+    # --- Auto-create notification for seller ---
+    buyer = await db.users.find_one({"_id": _oid(user.id)}, {"name": 1, "reg_no": 1})
+    title = "Buying Request"
+    msg = f"{buyer.get('name', 'A buyer')} requested to purchase: {listing.get('title', 'listing')}"
+    await _notify(
+        _oid(seller_id) if not isinstance(seller_id, ObjectId) else seller_id,
+        "buy_request",
+        title,
+        msg,
+        meta={
+            "listing_id": str(listing_obj_id),
+            "buyer_id": str(user.id),
+            "request_id": str(res.inserted_id),
+            "listing_title": listing.get("title"),
+            "listing_image": get_optimized_image_url((listing.get("images") or [None])[0]) if listing.get("images") else None
+        }
+    )
+
+     # --- Auto-create notification for buyer ---
+    buyer_notification_meta = {
+        "listing_id": str(listing_obj_id),
+        "seller_id": str(seller_id),
+        "request_id": str(res.inserted_id),
+        "listing_title": listing.get("title"),
+        "listing_image": get_optimized_image_url((listing.get("images") or [None])[0]) if listing.get("images") else None
+    }
+
+    await _notify(
+        _oid(user.id),
+        "system",
+        "Request Sent",
+        f"Your buying request for {listing.get('title', 'listing')} has been sent to the seller.",
+        meta=buyer_notification_meta
+    )
+
+    return {"message": "Buy request sent to seller ✅", "request_id": str(res.inserted_id)}
+
+@router.get("/{listing_id}/buy-requests", response_model=List[BuyRequestOut])
+async def list_buy_requests_for_listing(
+    listing_id: str,
+    user: TokenUser = Depends(get_current_user)
+):
+    listing_obj_id = _oid(listing_id)
+
+    listing = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Only seller can view requests for their listing
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="Not authorized to view requests for this listing")
+
+    cursor = db.purchase_requests.find({"listing_id": listing_obj_id}).sort("created_at", -1)
+    reqs = await cursor.to_list(length=None)
+
+    # Hydrate for UI
+    out: List[BuyRequestOut] = []
+    # Pull listing essentials once
+    listing_title = listing.get("title")
+    listing_image = get_optimized_image_url((listing.get("images") or [None])[0]) if listing.get("images") else None
+
+    # Batch buyer lookup
+    buyer_ids = list({r["buyer_id"] for r in reqs})
+    buyers = await db.users.find({"_id": {"$in": buyer_ids}}, {"name": 1, "reg_no": 1}).to_list(None)
+    buyers_map = {b["_id"]: b for b in buyers}
+
+    for r in reqs:
+        buyer_doc = buyers_map.get(r["buyer_id"], {})
+        out.append(BuyRequestOut(
+            id=str(r["_id"]),
+            listing_id=str(r["listing_id"]),
+            seller_id=str(r["seller_id"]),
+            buyer_id=str(r["buyer_id"]),
+            status=r.get("status", "pending"),
+            created_at=r["created_at"].isoformat(),
+            updated_at=r["updated_at"].isoformat(),
+            listing_title=listing_title,
+            listing_image=listing_image,
+            buyer_name=buyer_doc.get("name"),
+            buyer_reg_no=buyer_doc.get("reg_no")
+        ))
+
+    return out
+
+@router.post("/{listing_id}/buy-requests/{request_id}/accept", response_model=dict)
+async def accept_buy_request(
+    listing_id: str,
+    request_id: str,
+    user: TokenUser = Depends(get_current_user)
+):
+    listing_obj_id = _oid(listing_id)
+    req_obj_id = _oid(request_id)
+
+    listing = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Only seller can accept
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="Only the seller can accept a request")
+
+    if listing.get("is_sold"):
+        raise HTTPException(status_code=400, detail="Listing already sold")
+
+    req = await db.purchase_requests.find_one({"_id": req_obj_id, "listing_id": listing_obj_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Buy request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {req.get('status')}")
+
+    buyer_id = req["buyer_id"]
+    seller_id = listing["posted_by"]
+    price = float(listing["price"])
+
+    # Re-check buyer funds
+    buyer_doc = await db.users.find_one({"_id": buyer_id}, {"wallet_balance": 1, "name": 1})
+    if not buyer_doc:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    if float(buyer_doc.get("wallet_balance", 0.0)) < price:
+        # Auto-decline with reason; notify buyer to top-up
+        await db.purchase_requests.update_one(
+            {"_id": req_obj_id},
+            {"$set": {"status": "declined", "updated_at": datetime.now(timezone.utc), "decline_reason": "Insufficient funds"}}
+        )
+        await _notify(
+            buyer_id,
+            "buy_request",
+            "Buy Request Declined",
+            f"Your buy request for '{listing.get('title')}' was declined: Insufficient funds. Please top-up and try again.",
+            meta={"listing_id": str(listing_obj_id), "request_id": str(req_obj_id)}
+        )
+        raise HTTPException(status_code=400, detail="Buyer has insufficient wallet balance")
+
+    now = datetime.now(timezone.utc)
+
+    # 1) Mark request accepted
+    await db.purchase_requests.update_one(
+        {"_id": req_obj_id},
+        {"$set": {"status": "accepted", "updated_at": now}}
+    )
+
+    # 2) Debit buyer
+    await db.users.update_one(
+        {"_id": buyer_id},
+        {"$inc": {"wallet_balance": -price}}
+    )
+    await db.wallet_history.insert_one({
+        "user_id": buyer_id,
+        "type": "debit",
+        "amount": price,
+        "ref_note": f"Purchased listing: {listing.get('title')}",
+        "timestamp": now
+    })
+
+    # 3) Credit seller (IGNORE 30K cap for sales)
+    await db.users.update_one(
+        {"_id": seller_id},
+        {"$inc": {"wallet_balance": price}}
+    )
+    await db.wallet_history.insert_one({
+        "user_id": seller_id,
+        "type": "credit",
+        "amount": price,
+        "ref_note": f"Sold listing: {listing.get('title')}",
+        "timestamp": now
+    })
+
+    # 4) Mark listing as sold
+    await db.listings.update_one(
+        {"_id": listing_obj_id},
+        {"$set": {"is_sold": True, "buyer_id": buyer_id, "sold_at": now, "updated_at": now}}
+    )
+
+    # 5) Auto-decline all other pending requests for this listing
+    other_pending = db.purchase_requests.find({
+        "listing_id": listing_obj_id,
+        "status": "pending",
+        "_id": {"$ne": req_obj_id}
+    })
+    others = await other_pending.to_list(length=None)
+    if others:
+        other_ids = [r["_id"] for r in others]
+        await db.purchase_requests.update_many(
+            {"_id": {"$in": other_ids}},
+            {"$set": {"status": "declined", "updated_at": now, "decline_reason": "Another buyer accepted"}}
+        )
+        # notify those buyers
+        for r in others:
+            await _notify(
+                r["buyer_id"],
+                "buy_request",
+                "Buy Request Declined",
+                f"Your buy request for '{listing.get('title')}' was declined because the item was sold to another buyer.",
+                meta={"listing_id": str(listing_obj_id), "request_id": str(r["_id"])}
+            )
+
+    # 6) Notify buyer of acceptance
+    await _notify(
+        buyer_id,
+        "system",  # <-- changed from "buy_request"
+        "Buy Request Accepted 🎉",
+        f"Your request to buy '{listing.get('title')}' was accepted. Amount ₹{price:.0f} has been debited and the item is now yours.",
+        meta={"listing_id": str(listing_obj_id), "request_id": str(req_obj_id)}
+    )
+
+    return {"message": "Request accepted and purchase completed ✅"}
+
+@router.post("/{listing_id}/buy-requests/{request_id}/decline", response_model=dict)
+async def decline_buy_request(
+    listing_id: str,
+    request_id: str,
+    user: TokenUser = Depends(get_current_user),
+    reason: Optional[str] = Body(default=None, embed=True)
+):
+    listing_obj_id = _oid(listing_id)
+    req_obj_id = _oid(request_id)
+
+    listing = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Only seller can decline
+    if str(listing["posted_by"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="Only the seller can decline a request")
+
+    req = await db.purchase_requests.find_one({"_id": req_obj_id, "listing_id": listing_obj_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Buy request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {req.get('status')}")
+
+    now = datetime.now(timezone.utc)
+    await db.purchase_requests.update_one(
+        {"_id": req_obj_id},
+        {"$set": {"status": "declined", "updated_at": now, "decline_reason": reason or "Declined by seller"}}
+    )
+
+    # notify buyer
+    await _notify(
+        req["buyer_id"],
+        "buy_request",
+        "Buy Request Declined",
+        f"Your buy request for '{listing.get('title')}' was declined.",
+        meta={"listing_id": str(listing_obj_id), "request_id": str(req_obj_id), "reason": reason}
+    )
+
+    return {"message": "Request declined"}
 
 @router.post("/buy/{listing_id}", response_model=dict)
 async def buy_listing(listing_id: str, user=Depends(get_current_user)):

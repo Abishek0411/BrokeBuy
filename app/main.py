@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import auth, listings, messages, users, wallet, admin
+from app.routes import auth, listings, messages, users, wallet, admin, notifications
 from app.tasks.image_cleanup import start_cleanup_scheduler
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,6 +22,7 @@ app.include_router(messages.router)
 app.include_router(wallet.router)
 app.include_router(admin.router, prefix="/admin")
 app.include_router(listings.router)
+app.include_router(notifications.router)
 start_cleanup_scheduler()
 
 @app.get("/test")

@@ -7,6 +7,7 @@ from app.models.message import MessageCreate, ChatResponse
 from app.database import db
 from datetime import datetime, timezone
 from typing import List
+from app.routes.listings import _notify
 
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
@@ -17,23 +18,38 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     if user.id == data.receiver_id:
         raise HTTPException(status_code=400, detail="You cannot send a message to yourself.")
 
-    # (Optional but recommended) Check if receiver and listing exist
-    receiver_exists = await db.users.find_one({"_id": ObjectId(data.receiver_id)})
-    listing_exists = await db.listings.find_one({"_id": ObjectId(data.listing_id)})
-    if not receiver_exists or not listing_exists:   
+    # 2. Verify receiver and listing
+    receiver_exists = await db.users.find_one({"_id": ObjectId(data.receiver_id)}, {"name": 1})
+    listing_exists = await db.listings.find_one({"_id": ObjectId(data.listing_id)}, {"title": 1, "images": 1})
+    if not receiver_exists or not listing_exists:
         raise HTTPException(status_code=404, detail="Receiver or listing not found.")
-        
-    message = {
-        # 2. Data Integrity: Convert string IDs to ObjectId before saving
+
+    # 3. Insert the message
+    message_doc = {
         "sender_id": ObjectId(user.id),
         "receiver_id": ObjectId(data.receiver_id),
         "listing_id": ObjectId(data.listing_id),
         "message": data.message,
         "timestamp": datetime.now(timezone.utc)
     }
-    
-    await db.messages.insert_one(message)
-    return {"message": "Message sent successfully"}
+    await db.messages.insert_one(message_doc)
+
+    # 4. Create a notification for the receiver
+    sender = await db.users.find_one({"_id": ObjectId(user.id)}, {"name": 1})
+    await _notify(
+        ObjectId(data.receiver_id),
+        "message",
+        "New Message",
+        f"{sender.get('name', 'Someone')} sent you a new message about {listing_exists.get('title', 'a listing')}",
+        meta={
+            "sender_id": str(user.id),
+            "listing_id": str(data.listing_id),
+            "listing_title": listing_exists.get("title"),
+            "listing_image": (listing_exists.get("images") or [None])[0]
+        }
+    )
+
+    return {"message": "Message sent successfully and notification created."}
 
 @router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse)
 async def get_chat(

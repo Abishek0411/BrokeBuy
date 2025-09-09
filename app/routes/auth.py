@@ -93,14 +93,14 @@ async def login(data: LoginRequest):
 
                 # Wallet balance logic
                 if not user:
-                    # Brand new user → start with 20,000 credits
-                    wallet_balance = 20000.0
+                    # Brand new user → start with 50,000 credits
+                    wallet_balance = 50000.0
                 else:
                     # Existing user → keep balance as is
                     wallet_balance = user.get("wallet_balance", 0.0)
 
-                # Enforce max wallet cap of 30,000
-                wallet_balance = min(wallet_balance, 30000.0)
+                # Enforce max wallet cap of 50,000
+                wallet_balance = min(wallet_balance, 50000.0)
 
                 update_data = {
                     "email": email,

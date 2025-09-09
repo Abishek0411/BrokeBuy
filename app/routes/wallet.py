@@ -20,8 +20,8 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Invalid top-up amount")
 
     # 1. Check top-up limit
-    if (user.wallet_balance or 0) + data.amount > 30000:
-        raise HTTPException(status_code=400, detail="Wallet balance cannot exceed ₹30,000")
+    if (user.wallet_balance or 0) + data.amount > 50000:
+        raise HTTPException(status_code=400, detail="Wallet balance cannot exceed ₹50,000")
 
     # 2. Check top-up count today
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)

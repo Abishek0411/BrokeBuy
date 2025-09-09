@@ -313,8 +313,14 @@ async def accept_buy_request(
     if req.get("status") != "pending":
         raise HTTPException(status_code=400, detail=f"Request is already {req.get('status')}")
 
+    # Ensure IDs are ObjectId
     buyer_id = req["buyer_id"]
+    if not isinstance(buyer_id, ObjectId):
+        buyer_id = ObjectId(buyer_id)
+
     seller_id = listing["posted_by"]
+    if not isinstance(seller_id, ObjectId):
+        seller_id = ObjectId(seller_id)
     price = float(listing["price"])
 
     # Re-check buyer funds
@@ -344,7 +350,11 @@ async def accept_buy_request(
         {"_id": req_obj_id},
         {"$set": {"status": "accepted", "updated_at": now}}
     )
-
+    # Delete the original buy_request notification for this request
+    await db.notifications.delete_many({
+        "receiver_id": seller_id,
+        "metadata.request_id": str(req_obj_id)
+    })
     # 2) Debit buyer
     await db.users.update_one(
         {"_id": buyer_id},
@@ -358,7 +368,7 @@ async def accept_buy_request(
         "timestamp": now
     })
 
-    # 3) Credit seller (IGNORE 30K cap for sales)
+    # 3) Credit seller (IGNORE 50K cap for sales)
     await db.users.update_one(
         {"_id": seller_id},
         {"$inc": {"wallet_balance": price}}
@@ -440,14 +450,23 @@ async def decline_buy_request(
         {"_id": req_obj_id},
         {"$set": {"status": "declined", "updated_at": now, "decline_reason": reason or "Declined by seller"}}
     )
+    # Delete the original buy_request notification for this request
+    await db.notifications.delete_many({
+        "receiver_id": ObjectId(user.id),
+        "metadata.request_id": str(req_obj_id)
+    })
 
     # notify buyer
     await _notify(
         req["buyer_id"],
-        "buy_request",
+        "system",  # <-- FIXED
         "Buy Request Declined",
         f"Your buy request for '{listing.get('title')}' was declined.",
-        meta={"listing_id": str(listing_obj_id), "request_id": str(req_obj_id), "reason": reason}
+        meta={
+            "listing_id": str(listing_obj_id),
+            "request_id": str(req_obj_id),
+            "reason": reason or "Declined by seller"
+        }
     )
 
     return {"message": "Request declined"}
@@ -486,22 +505,27 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Failed to deduct from buyer wallet")
 
     await db.wallet_history.insert_one({
-        "user_id": str(buyer_id),
+        "user_id": buyer_id,
         "type": "debit",
         "amount": price,
         "ref_note": f"Purchased listing: {listing['title']}",
         "timestamp": now
     })
 
-    # ✅ Credit seller wallet (IGNORE 30K LIMIT for sales)
-    seller_id = ObjectId(listing["posted_by"])
-    await db.users.update_one(
+    # ✅ Credit seller wallet
+    seller_id = listing["posted_by"]
+    if not isinstance(seller_id, ObjectId):
+        seller_id = ObjectId(seller_id)
+
+    credit_result = await db.users.update_one(
         {"_id": seller_id},
         {"$inc": {"wallet_balance": price}}
     )
+    if credit_result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to credit seller wallet")
 
     await db.wallet_history.insert_one({
-        "user_id": str(seller_id),
+        "user_id": seller_id,
         "type": "credit",
         "amount": price,
         "ref_note": f"Sold listing: {listing['title']}",

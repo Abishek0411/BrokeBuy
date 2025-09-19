@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.utils.auth import get_current_user
-from app.database import db
+from app.database import db, client
 from bson import ObjectId
 from app.models.wallet import WalletAdd, WalletResponse
 from datetime import datetime, timezone
@@ -19,18 +19,30 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
     if data.amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid top-up amount")
 
-    # Start a client session for the transaction
-    async with await db.start_session() as s:
-        # Start a transaction
+    # 1. Check top-up limit
+    if (user.wallet_balance or 0) + data.amount > 50000:
+        raise HTTPException(status_code=400, detail="Wallet balance cannot exceed ₹50,000")
+
+    # 2. Check top-up count today
+    start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    topups_today = await db.wallet_history.count_documents({
+        "user_id": ObjectId(user.id),
+        "type": "credit",
+        "timestamp": {"$gte": start_of_day}
+    })
+
+    if topups_today >= 2:
+        raise HTTPException(status_code=400, detail="You can only top-up twice per day")
+
+    # 3. Transaction
+    async with await client.start_session() as s:
         async with s.start_transaction():
             try:
-                # Perform both operations within the transaction
                 await db.users.update_one(
                     {"_id": ObjectId(user.id)},
                     {"$inc": {"wallet_balance": data.amount}},
                     session=s
                 )
-
                 await db.wallet_history.insert_one({
                     "user_id": ObjectId(user.id),
                     "type": "credit",
@@ -38,13 +50,12 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
                     "ref_note": data.ref_note,
                     "timestamp": datetime.now(timezone.utc)
                 }, session=s)
-
             except PyMongoError as e:
-                # The transaction will be automatically aborted on an error
                 print(f"Transaction failed: {e}")
                 raise HTTPException(status_code=500, detail="Wallet top-up failed.")
 
     return {"message": f"₹{data.amount} added to your wallet"}
+
 
 # ✅ View transaction history
 @router.get("/history")

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 class MessageCreate(BaseModel):
     receiver_id: str
@@ -13,3 +13,21 @@ class MessageResponse(BaseModel):
     listing_id: str
     message: str
     timestamp: datetime
+
+class OtherUser(BaseModel):
+    id: str
+    name: str | None
+    avatar: str | None
+    reg_no: str | None
+
+class ListingPreview(BaseModel):
+    id: str
+    title: str
+    price: float
+    image: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    messages: List[MessageResponse]
+    other_user: OtherUser
+    listing: ListingPreview  # ✅ Added tagged listing

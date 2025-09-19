@@ -1,11 +1,14 @@
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
-from app.models.message import MessageCreate, MessageResponse
+from app.utils.cloudinary import get_optimized_image_url
+from app.models.message import MessageCreate, ChatResponse
 from app.database import db
 from datetime import datetime, timezone
 from typing import List
+from app.routes.listings import _notify
+
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
 
@@ -15,47 +18,203 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     if user.id == data.receiver_id:
         raise HTTPException(status_code=400, detail="You cannot send a message to yourself.")
 
-    # (Optional but recommended) Check if receiver and listing exist
-    receiver_exists = await db.users.find_one({"_id": ObjectId(data.receiver_id)})
-    listing_exists = await db.listings.find_one({"_id": ObjectId(data.listing_id)})
-    if not receiver_exists or not listing_exists:   
+    # 2. Verify receiver and listing
+    receiver_exists = await db.users.find_one({"_id": ObjectId(data.receiver_id)}, {"name": 1})
+    listing_exists = await db.listings.find_one({"_id": ObjectId(data.listing_id)}, {"title": 1, "images": 1})
+    if not receiver_exists or not listing_exists:
         raise HTTPException(status_code=404, detail="Receiver or listing not found.")
-        
-    message = {
-        # 2. Data Integrity: Convert string IDs to ObjectId before saving
+
+    # 3. Insert the message
+    message_doc = {
         "sender_id": ObjectId(user.id),
         "receiver_id": ObjectId(data.receiver_id),
         "listing_id": ObjectId(data.listing_id),
         "message": data.message,
         "timestamp": datetime.now(timezone.utc)
     }
-    
-    await db.messages.insert_one(message)
-    return {"message": "Message sent successfully"}
+    await db.messages.insert_one(message_doc)
 
-@router.get("/chat/{listing_id}/{receiver_id}", response_model=List[MessageResponse])
-async def get_chat(listing_id: str, receiver_id: str, user: TokenUser = Depends(get_current_user)):
-    # Query using ObjectIds for consistency and correctness
+    # 4. Create a notification for the receiver
+    sender = await db.users.find_one({"_id": ObjectId(user.id)}, {"name": 1})
+    await _notify(
+        ObjectId(data.receiver_id),
+        "message",
+        "New Message",
+        f"{sender.get('name', 'Someone')} sent you a new message about {listing_exists.get('title', 'a listing')}",
+        meta={
+            "sender_id": str(user.id),
+            "listing_id": str(data.listing_id),
+            "listing_title": listing_exists.get("title"),
+            "listing_image": (listing_exists.get("images") or [None])[0]
+        }
+    )
+
+    return {"message": "Message sent successfully and notification created."}
+
+@router.get("/chat/{listing_id}/{receiver_id}", response_model=ChatResponse)
+async def get_chat(
+    listing_id: str, 
+    receiver_id: str, 
+    user: TokenUser = Depends(get_current_user),
+    # Add pagination parameters
+    skip: int = 0,
+    limit: int = Query(default=50, lte=100)
+):
     sender_obj_id = ObjectId(user.id)
     receiver_obj_id = ObjectId(receiver_id)
     listing_obj_id = ObjectId(listing_id)
 
-    # This query will now be extremely fast because of the index you created
+    # Step 1: Fetch a 'page' of messages
     messages_cursor = db.messages.find({
         "$or": [
             {"sender_id": sender_obj_id, "receiver_id": receiver_obj_id},
             {"sender_id": receiver_obj_id, "receiver_id": sender_obj_id}
         ],
         "listing_id": listing_obj_id
-    }).sort("timestamp", 1)
+    }).sort("timestamp", -1).skip(skip).limit(limit) # Sort descending and paginate
 
-    messages = []
-    async for message in messages_cursor:
-        # Ensure the response model can handle ObjectId by converting it back to str
-        message['id'] = str(message['_id'])
-        message['sender_id'] = str(message['sender_id'])
-        message['receiver_id'] = str(message['receiver_id'])
-        message['listing_id'] = str(message['listing_id'])
-        messages.append(MessageResponse(**message))
-        
-    return messages
+    # Use the limit parameter here
+    messages = await messages_cursor.to_list(length=limit)
+    messages.reverse() # Reverse to show oldest first in the chunk
+
+    # Step 2: Mark unread messages as read (this is fine as is)
+    # This operation is quick and should run on all unread messages in the chat, not just the page.
+    await db.messages.update_many(
+        {
+            "sender_id": receiver_obj_id, "receiver_id": sender_obj_id,
+            "listing_id": listing_obj_id, "is_read": {"$ne": True}
+        },
+        {"$set": {"is_read": True}}
+    )
+
+    # Step 3 & 4 remain the same...
+    for msg in messages:
+        msg['id'] = str(msg['_id'])
+        msg['sender_id'] = str(msg['sender_id'])
+        msg['receiver_id'] = str(msg['receiver_id'])
+        msg['listing_id'] = str(msg['listing_id'])
+
+    other_user_doc = await db.users.find_one({"_id": receiver_obj_id})
+    if not other_user_doc:
+        raise HTTPException(status_code=404, detail="Chat partner not found")
+
+    other_user_data = {
+        "id": str(other_user_doc["_id"]),
+        "name": other_user_doc.get("name"),
+        "avatar": other_user_doc.get("avatar"),
+        "reg_no": other_user_doc.get("reg_no")
+    }
+
+    # Step 5: Get listing details (for tagged listing in chat)
+    listing_doc = await db.listings.find_one({"_id": listing_obj_id})
+    if not listing_doc:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    listing_data = {
+        "id": str(listing_doc["_id"]),
+        "title": listing_doc.get("title"),
+        "price": listing_doc.get("price"),
+        "image": get_optimized_image_url(listing_doc["images"][0]) if listing_doc.get("images") else None
+    }
+
+    return {
+        "messages": messages,
+        "other_user": other_user_data,
+        "listing": listing_data
+    }
+
+@router.get("/conversations", response_model=List[dict])
+async def get_conversations(user: TokenUser = Depends(get_current_user)):
+    user_obj_id = ObjectId(user.id)
+
+    pipeline = [
+        {
+            "$match": {
+                "$or": [
+                    {"sender_id": user_obj_id},
+                    {"receiver_id": user_obj_id}
+                ]
+            }
+        },
+        {"$sort": {"timestamp": -1}},
+        {
+            "$group": {
+                "_id": {
+                    "listing_id": "$listing_id",
+                    "other_user_id": {
+                        "$cond": {
+                            "if": {"$eq": ["$sender_id", user_obj_id]},
+                            "then": "$receiver_id",
+                            "else": "$sender_id"
+                        }
+                    }
+                },
+                "last_message": {"$first": "$message"},
+                "last_message_time": {"$first": "$timestamp"},
+                "messages_for_unread": {
+                    "$push": {
+                        "sender_id": "$sender_id",
+                        "is_read": "$is_read"
+                    }
+                }
+            }
+        },
+        {
+            "$lookup": {
+                "from": "listings",
+                "localField": "_id.listing_id",
+                "foreignField": "_id",
+                "as": "listing_details"
+            }
+        },
+        {
+            "$lookup": {
+                "from": "users",
+                "localField": "_id.other_user_id",
+                "foreignField": "_id",
+                "as": "other_user_details"
+            }
+        },
+        {"$unwind": "$listing_details"},
+        {"$unwind": "$other_user_details"},
+        {
+            "$project": {
+                "_id": 0,
+                "listing_id": {"$toString": "$_id.listing_id"},
+                "listing_title": "$listing_details.title",
+                "listing_image": {"$arrayElemAt": ["$listing_details.images", 0]},
+                "other_user": {
+                    "id": {"$toString": "$_id.other_user_id"},
+                    "name": "$other_user_details.name",
+                    "avatar": "$other_user_details.avatar",
+                    "reg_no": "$other_user_details.reg_no"
+                },
+                "last_message": "$last_message",
+                "last_message_time": "$last_message_time",
+                "unread_count": {
+                    "$size": {
+                        "$filter": {
+                            "input": "$messages_for_unread",
+                            "as": "msg",
+                            "cond": {
+                                "$and": [
+                                    {"$eq": ["$$msg.sender_id", "$_id.other_user_id"]},
+                                    {"$ne": ["$$msg.is_read", True]}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+
+    conversations_cursor = db.messages.aggregate(pipeline)
+    conversations = await conversations_cursor.to_list(length=None)
+
+    # ✅ Optimize images before returning
+    for convo in conversations:
+        if convo.get("listing_image"):
+            convo["listing_image"] = get_optimized_image_url(convo["listing_image"])
+
+    return conversations

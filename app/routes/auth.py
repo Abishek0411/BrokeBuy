@@ -1,6 +1,6 @@
 from collections import defaultdict
 import traceback
-from fastapi import APIRouter, HTTPException, status, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends
 import asyncio  
 import httpx # Use async-native httpx
 from fastapi.security import OAuth2PasswordBearer
@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from app.database import db
 from app.utils.auth import create_access_token
 import requests
-from bson import ObjectId
 
 router = APIRouter()
 SRM_SESSION_TTL_MINUTES = 20
@@ -45,7 +44,7 @@ async def login(data: LoginRequest):
             # Step 2: Login to SRM only if no valid session exists
             if not srm_token:
                 async with httpx.AsyncClient() as client:
-                    res = await client.post("http://localhost:9000/login", json=data.model_dump())
+                    res = await client.post("http://localhost:3001/login", json=data.model_dump())
                 
                 if res.status_code != 200:
                     raise HTTPException(status_code=res.status_code, detail="SRM authentication service failed.")
@@ -58,34 +57,71 @@ async def login(data: LoginRequest):
 
             # Step 3: Fetch profile and update DB if needed
             if not user or not user.get("srm_id"):
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
                     headers = {"X-CSRF-Token": srm_token}
-                    profile_res = await client.get("http://localhost:9000/user", headers=headers)
-                
+                    profile_res = await client.get("http://localhost:3001/profile", headers=headers)
+
+                if profile_res.status_code != 200:
+                    raise HTTPException(
+                        status_code=profile_res.status_code,
+                        detail="Failed to fetch profile from SRM scraper"
+                    )
+
                 profile = profile_res.json()
                 expires_at = datetime.now(timezone.utc) + timedelta(minutes=SRM_SESSION_TTL_MINUTES)
 
+                # Extract name and reg_no
+                raw_name = ""
+                reg_no = ""
+
+                name_field = profile.get("name")
+                if isinstance(name_field, list) and name_field:
+                    # Case 1: name is a list of objects
+                    raw_name_value = name_field[0].get("text", "")
+                elif isinstance(name_field, str):
+                    # Case 2: name is a direct string
+                    raw_name_value = name_field
+                else:
+                    raw_name_value = ""
+
+                # Now parse reg_no and name from the string
+                parts = raw_name_value.split(" - ", 1)
+                if len(parts) == 2:
+                    reg_no, raw_name = parts[0], parts[1]
+                else:
+                    raw_name = raw_name_value
+
+                # Wallet balance logic
+                if not user:
+                    # Brand new user → start with 50,000 credits
+                    wallet_balance = 50000.0
+                else:
+                    # Existing user → keep balance as is
+                    wallet_balance = user.get("wallet_balance", 0.0)
+
+                # Enforce max wallet cap of 50,000
+                wallet_balance = min(wallet_balance, 50000.0)
+
                 update_data = {
                     "email": email,
-                    "srm_id": profile.get("srmId"),
-                    "reg_no": profile.get("regNumber", ""),
-                    "name": profile.get("name"),
-                    "phone": profile.get("mobile", ""),
+                    "srm_id": profile.get("id"),  # using profile's id here
+                    "reg_no": reg_no or profile.get("regNumber", ""),
+                    "name": raw_name,
+                    "phone": "",  # not available from /profile
                     "avatar": profile.get("photoUrl", ""),
                     "role": "student",
-                    "wallet_balance": user.get("wallet_balance", 0.0) if user else 0.0,
+                    "wallet_balance": wallet_balance,
                     "srm_session": {
                         "token": srm_token,
                         "expires_at": expires_at.isoformat()
                     }
                 }
-                
                 await db.users.update_one(
                     {"email": email},
                     {"$set": update_data},
                     upsert=True
                 )
-            
+
             final_user = await db.users.find_one({"email": email})
 
             # Step 4: Issue application access token

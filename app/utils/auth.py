@@ -1,7 +1,7 @@
 import jwt
 from datetime import datetime, timedelta, timezone
 import os
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from app.database import db
 from bson import ObjectId

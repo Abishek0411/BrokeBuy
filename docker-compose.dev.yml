@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: brokebuy-mongodb-dev
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: brokebuy
+    volumes:
+      - mongodb_dev_data:/data/db
+    networks:
+      - brokebuy-dev-network
+
+  # FastAPI Backend (Development)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: brokebuy-backend-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    volumes:
+      - .:/app
+      - /app/myenv
+    depends_on:
+      - mongodb
+    networks:
+      - brokebuy-dev-network
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # Node.js Scraper (Development)
+  scraper:
+    build:
+      context: ../SRM-Academia-Scraper-node-main/server
+      dockerfile: Dockerfile.dev
+    container_name: brokebuy-scraper-dev
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ../SRM-Academia-Scraper-node-main/server:/app
+      - /app/node_modules
+    networks:
+      - brokebuy-dev-network
+    command: ["npm", "run", "dev"]
+
+  # React Frontend (Development)
+  frontend:
+    build:
+      context: ../proj_BrokeBuy_frontend/srm-brokebuy-vibe
+      dockerfile: Dockerfile.dev
+    container_name: brokebuy-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_SCRAPER_URL=http://localhost:3001
+    volumes:
+      - ../proj_BrokeBuy_frontend/srm-brokebuy-vibe:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+      - scraper
+    networks:
+      - brokebuy-dev-network
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+volumes:
+  mongodb_dev_data:
+    driver: local
+
+networks:
+  brokebuy-dev-network:
+    driver: bridge

@@ -11,12 +11,46 @@ Link to the frontend repo: https://github.com/Abishek0411/BrokeBuy-Frontend
 |--------------------|-----------------------------------------|
 | Framework          | [FastAPI](https://fastapi.tiangolo.com/) 🐍 |
 | Language           | Python 3.10+                            |
-| Database           | MongoDB Atlas (NoSQL)                   |
+| Database           | MongoDB (Local/Atlas)                   |
 | Auth               | JWT (OAuth2PasswordBearer)              |
 | Cloud Storage      | Cloudinary (image upload/optimization)  |
 | Image Validation   | Pydantic + Byte-level size check        |
 | Environment Config | Python-dotenv                           |
-| Hosting/Dev        | Localhost + VSCode Port Forwarding      |
+| Containerization   | Docker + Docker Compose                 |
+| Hosting/Dev        | Localhost + Docker                      |
+
+---
+
+## ⚡ Quick Start
+
+### 1. Environment Setup
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit with your credentials
+nano .env
+```
+
+### 2. Development Mode
+```bash
+# Start all services
+./optimized-dev-start.sh
+
+# Stop all services
+./optimized-dev-stop.sh
+```
+
+### 3. Docker Mode
+```bash
+# Production
+docker-compose up -d
+
+# Development
+docker-compose -f docker-compose.dev.yml up -d
+```
+
+📖 **Detailed Setup**: See [ENVIRONMENT-SETUP.md](ENVIRONMENT-SETUP.md) for complete environment configuration.
 
 ---
 

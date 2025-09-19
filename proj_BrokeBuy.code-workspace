@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../proj_BrokeBuy_frontend"
+		},
+		{
+			"path": "../SRM-Academia-Scraper-node-main"
+		}
+	],
+	"settings": {
+		"postman.settings.dotenv-detection-notification-visibility": false
+	}
+}

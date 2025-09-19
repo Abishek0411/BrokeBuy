@@ -8,6 +8,7 @@ set -e
 # Configuration
 SERVER_USER="srmadmin"
 SERVER_HOST="172.16.0.60"
+SERVER_PASSWORD="SRM_Admin"
 SERVER_PATH="/home/srmadmin/brokebuy"
 
 # Colors for output
@@ -56,7 +57,7 @@ show_usage() {
 # Check service status
 check_status() {
     print_status "Checking service status..."
-    ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml ps"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml ps"
 }
 
 # Show logs
@@ -64,38 +65,38 @@ show_logs() {
     local service=${1:-""}
     if [ -n "$service" ]; then
         print_status "Showing logs for $service..."
-        ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml logs -f $service"
+        sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml logs -f $service"
     else
         print_status "Showing logs for all services..."
-        ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml logs -f"
+        sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml logs -f"
     fi
 }
 
 # Restart services
 restart_services() {
     print_status "Restarting services..."
-    ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml restart"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml restart"
     print_success "Services restarted"
 }
 
 # Stop services
 stop_services() {
     print_status "Stopping services..."
-    ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml down"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml down"
     print_success "Services stopped"
 }
 
 # Start services
 start_services() {
     print_status "Starting services..."
-    ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml up -d"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && docker-compose -f docker-compose.prod.yml up -d"
     print_success "Services started"
 }
 
 # Update services
 update_services() {
     print_status "Updating services..."
-    ssh $SERVER_USER@$SERVER_HOST << 'EOF'
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << 'EOF'
         cd /home/srmadmin/brokebuy
         
         # Pull latest changes (if using git)
@@ -118,7 +119,7 @@ backup_database() {
     local backup_file="brokebuy_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
     print_status "Creating database backup: $backup_file"
     
-    ssh $SERVER_USER@$SERVER_HOST << EOF
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << EOF
         cd $SERVER_PATH
         
         # Create backup directory if it doesn't exist
@@ -141,7 +142,7 @@ restore_database() {
     if [ -z "$backup_file" ]; then
         print_error "Please provide backup file name"
         echo "Available backups:"
-        ssh $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && ls -la backups/ 2>/dev/null || echo 'No backups found'"
+        sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "cd $SERVER_PATH && ls -la backups/ 2>/dev/null || echo 'No backups found'"
         exit 1
     fi
     
@@ -153,7 +154,7 @@ restore_database() {
     fi
     
     print_status "Restoring database from $backup_file..."
-    ssh $SERVER_USER@$SERVER_HOST << EOF
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << EOF
         cd $SERVER_PATH
         
         # Stop services
@@ -185,7 +186,7 @@ EOF
 # Monitor resource usage
 monitor_resources() {
     print_status "Monitoring resource usage..."
-    ssh $SERVER_USER@$SERVER_HOST << 'EOF'
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << 'EOF'
         echo "=== Docker Container Stats ==="
         docker stats --no-stream
         
@@ -207,7 +208,7 @@ EOF
 # Open shell on server
 open_shell() {
     print_status "Opening shell on server..."
-    ssh $SERVER_USER@$SERVER_HOST
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST
 }
 
 # Main function

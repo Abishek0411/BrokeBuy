@@ -4,7 +4,8 @@ This guide provides step-by-step instructions for deploying the BrokeBuy applica
 
 ## Prerequisites
 
-- SSH access to the server (`srmadmin@172.16.0.60`)
+- SSH access to the server (`srmadmin@172.16.0.60`) with password `SRM_Admin`
+- `sshpass` installed on your local machine for password authentication
 - Docker and Docker Compose installed on the server
 - All project files ready for deployment
 
@@ -25,7 +26,14 @@ nano .env.prod
 - `JWT_SECRET_KEY`: Generate a long, random secret key
 - `CLOUDINARY_*`: Your Cloudinary credentials for image uploads
 
-### 2. Deploy to Server
+### 2. Install sshpass (if not already installed)
+
+```bash
+# Install sshpass for password authentication
+./install-sshpass.sh
+```
+
+### 3. Deploy to Server
 
 ```bash
 # Run the deployment script

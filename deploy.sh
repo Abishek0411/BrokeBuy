@@ -17,6 +17,7 @@ NC='\033[0m' # No Color
 # Configuration
 SERVER_USER="srmadmin"
 SERVER_HOST="172.16.0.60"
+SERVER_PASSWORD="SRM_Admin"
 SERVER_PATH="/home/srmadmin/brokebuy"
 LOCAL_PATH="/home/abishek/Downloads"
 
@@ -73,14 +74,20 @@ setup_environment() {
 deploy_to_server() {
     print_status "Deploying to server $SERVER_USER@$SERVER_HOST..."
     
+    # Check if sshpass is installed
+    if ! command -v sshpass &> /dev/null; then
+        print_status "Installing sshpass for password authentication..."
+        sudo apt-get update && sudo apt-get install -y sshpass
+    fi
+    
     # Create directory on server
-    ssh $SERVER_USER@$SERVER_HOST "mkdir -p $SERVER_PATH"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST "mkdir -p $SERVER_PATH"
     
     # Copy project files to server
     print_status "Copying project files..."
-    scp -r $LOCAL_PATH/proj_BrokeBuy_backend/* $SERVER_USER@$SERVER_HOST:$SERVER_PATH/
-    scp -r $LOCAL_PATH/proj_BrokeBuy_frontend $SERVER_USER@$SERVER_HOST:$SERVER_PATH/../
-    scp -r $LOCAL_PATH/SRM-Academia-Scraper-node-main $SERVER_USER@$SERVER_HOST:$SERVER_PATH/../
+    sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no -r $LOCAL_PATH/proj_BrokeBuy_backend/* $SERVER_USER@$SERVER_HOST:$SERVER_PATH/
+    sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no -r $LOCAL_PATH/proj_BrokeBuy_frontend $SERVER_USER@$SERVER_HOST:$SERVER_PATH/../
+    sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no -r $LOCAL_PATH/SRM-Academia-Scraper-node-main $SERVER_USER@$SERVER_HOST:$SERVER_PATH/../
     
     print_success "Files copied to server"
 }
@@ -89,7 +96,7 @@ deploy_to_server() {
 setup_server() {
     print_status "Setting up services on server..."
     
-    ssh $SERVER_USER@$SERVER_HOST << 'EOF'
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_HOST << 'EOF'
         cd /home/srmadmin/brokebuy
         
         # Install Docker if not present

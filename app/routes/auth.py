@@ -44,7 +44,7 @@ async def login(data: LoginRequest):
             # Step 2: Login to SRM only if no valid session exists
             if not srm_token:
                 async with httpx.AsyncClient() as client:
-                    res = await client.post("http://localhost:9000/login", json=data.model_dump())
+                    res = await client.post("http://localhost:3001/login", json=data.model_dump())
                 
                 if res.status_code != 200:
                     raise HTTPException(status_code=res.status_code, detail="SRM authentication service failed.")
@@ -59,7 +59,7 @@ async def login(data: LoginRequest):
             if not user or not user.get("srm_id"):
                 async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
                     headers = {"X-CSRF-Token": srm_token}
-                    profile_res = await client.get("http://localhost:9000/profile", headers=headers)
+                    profile_res = await client.get("http://localhost:3001/profile", headers=headers)
 
                 if profile_res.status_code != 200:
                     raise HTTPException(

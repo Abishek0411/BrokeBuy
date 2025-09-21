@@ -202,7 +202,7 @@ Authorization: Bearer <access_token>
 
 ## 👨‍💻 Contributors
 
-* 👨‍💻 [Abishek Rajaram](https://github.com/abishekr03) — DevOps + Backend Lead
+* 👨‍💻 [Abishek](https://github.com/Abishek0411) — DevOps + Backend Lead
 * ⚙️ Academia Scraper Microservice — powers SRM SSO login
 * ☁️ Cloudinary — image hosting
 * 🧠 ChatGPT — code assistant

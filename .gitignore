@@ -89,3 +89,27 @@ ios/*.xcodeproj/
 *.sublime-project
 
 proj_BrokeBuy.code-workspace
+
+# 🔹 Deployment Scripts (Contains Sensitive Information)
+deploy.sh
+deploy-optimized.sh
+update-deploy.sh
+update-optimized.sh
+server-management.sh
+install-sshpass.sh
+
+# 🔹 Environment Templates (Contains Sensitive Information)
+env.prod.template
+.env.prod
+
+# 🔹 Deployment Documentation (Contains Server Details)
+DEPLOYMENT-GUIDE.md
+DEPLOYMENT-OPTIMIZATION.md
+DIRECTORY-STRUCTURE.md
+CI-CD-SETUP.md
+
+# 🔹 GitHub Actions (Contains Server Credentials)
+.github/
+
+# 🔹 Deployment Configuration
+.deployignore

@@ -55,7 +55,7 @@ services:
   # Node.js Scraper
   scraper:
     build:
-      context: ../SRM-Academia-Scraper-node-main/server
+      context: ../scraper
       dockerfile: Dockerfile
     container_name: brokebuy-scraper-prod
     restart: unless-stopped
@@ -75,7 +75,7 @@ services:
   # React Frontend
   frontend:
     build:
-      context: ../proj_BrokeBuy_frontend/srm-brokebuy-vibe
+      context: ../frontend
       dockerfile: Dockerfile
     container_name: brokebuy-frontend-prod
     restart: unless-stopped

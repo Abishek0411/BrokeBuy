@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import List, Optional
 
 class MessageCreate(BaseModel):
     receiver_id: str
     listing_id: str
-    message: str
+    message: str = Field(..., max_length=500, description="Message must be 500 characters or less")
 
 class MessageResponse(BaseModel):
     sender_id: str

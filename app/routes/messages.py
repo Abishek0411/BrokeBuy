@@ -5,6 +5,7 @@ from app.utils.auth import get_current_user
 from app.utils.cloudinary import get_optimized_image_url
 from app.models.message import MessageCreate, ChatResponse
 from app.database import db
+from app.utils.rate_limiter import RateLimiter
 from datetime import datetime, timezone
 from typing import List
 from app.routes.listings import _notify
@@ -14,17 +15,22 @@ router = APIRouter(prefix="/messages", tags=["Messages"])
 
 @router.post("/send", response_model=dict)
 async def send_message(data: MessageCreate, user: TokenUser = Depends(get_current_user)):
-    # 1. Validation: Prevent sending messages to oneself
+    # 1. Rate limiting: Check message rate limit (3 per 10s)
+    can_send, rate_limit_msg = await RateLimiter.check_message_rate_limit(user.id, window_seconds=10, max_requests=3)
+    if not can_send:
+        raise HTTPException(status_code=429, detail=rate_limit_msg)
+
+    # 2. Validation: Prevent sending messages to oneself
     if user.id == data.receiver_id:
         raise HTTPException(status_code=400, detail="You cannot send a message to yourself.")
 
-    # 2. Verify receiver and listing
+    # 3. Verify receiver and listing
     receiver_exists = await db.users.find_one({"_id": ObjectId(data.receiver_id)}, {"name": 1})
     listing_exists = await db.listings.find_one({"_id": ObjectId(data.listing_id)}, {"title": 1, "images": 1})
     if not receiver_exists or not listing_exists:
         raise HTTPException(status_code=404, detail="Receiver or listing not found.")
 
-    # 3. Insert the message
+    # 4. Insert the message
     message_doc = {
         "sender_id": ObjectId(user.id),
         "receiver_id": ObjectId(data.receiver_id),
@@ -34,7 +40,7 @@ async def send_message(data: MessageCreate, user: TokenUser = Depends(get_curren
     }
     await db.messages.insert_one(message_doc)
 
-    # 4. Create a notification for the receiver
+    # 5. Create a notification for the receiver
     sender = await db.users.find_one({"_id": ObjectId(user.id)}, {"name": 1})
     await _notify(
         ObjectId(data.receiver_id),

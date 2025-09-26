@@ -7,10 +7,13 @@ from fastapi.security import OAuth2PasswordBearer
 from app.utils.auth import get_current_user
 from app.models.user import TokenUser
 from pydantic import BaseModel
+from typing import Optional
 import requests
 from datetime import datetime, timedelta, timezone
+import time
 from app.database import db
 from app.utils.auth import create_access_token
+from app.utils.security_challenge import SecurityChallenge
 import requests
 
 router = APIRouter()
@@ -19,14 +22,60 @@ SRM_SESSION_TTL_MINUTES = 20
 class LoginRequest(BaseModel):
     account: str
     password: str
+    challenge_answer: Optional[str] = None
+    session_token: Optional[str] = None
+
+class ChallengeResponse(BaseModel):
+    question: str
+    session_token: str
 
 # In-memory lock to handle concurrent requests for the same user
 login_locks = defaultdict(asyncio.Lock)
+
+# Store challenge sessions temporarily
+challenge_sessions = {}
+
+@router.post("/challenge", response_model=ChallengeResponse)
+async def get_security_challenge():
+    """Get a security challenge for login"""
+    question, answer_hash = SecurityChallenge.generate_challenge()
+    session_token = SecurityChallenge.generate_session_token()
+    
+    # Store the answer hash with the session token
+    challenge_sessions[session_token] = {
+        "answer_hash": answer_hash,
+        "created_at": time.time()
+    }
+    
+    return ChallengeResponse(question=question, session_token=session_token)
 
 @router.post("/login")
 async def login(data: LoginRequest):
     email = data.account
     user_lock = login_locks[email]
+
+    # Verify security challenge if provided
+    if data.session_token and data.challenge_answer:
+        if data.session_token not in challenge_sessions:
+            raise HTTPException(status_code=400, detail="Invalid or expired challenge session")
+        
+        session_data = challenge_sessions[data.session_token]
+        
+        # Check if session is not too old (5 minutes)
+        if time.time() - session_data["created_at"] > 300:
+            del challenge_sessions[data.session_token]
+            raise HTTPException(status_code=400, detail="Challenge session expired")
+        
+        # Verify the answer
+        if not SecurityChallenge.verify_challenge(data.challenge_answer, session_data["answer_hash"]):
+            raise HTTPException(status_code=400, detail="Incorrect challenge answer")
+        
+        # Clean up the session
+        del challenge_sessions[data.session_token]
+    else:
+        # For now, we'll make the challenge optional but recommend it
+        # In production, you might want to make it mandatory
+        pass
 
     try:
         async with user_lock:

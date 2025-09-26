@@ -1,6 +1,7 @@
 from fastapi import FastAPI
-from app.routes import auth, listings, messages, users, wallet, admin, notifications
+from app.routes import auth, listings, messages, users, wallet, admin, notifications, reviews, abuse, credit_transactions
 from app.tasks.image_cleanup import AsyncIOScheduler, delete_old_listing_images
+from app.tasks.wallet_auto_refill_task import check_all_users_for_auto_refill, get_money_flow_summary
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -28,6 +29,9 @@ app.include_router(wallet.router)
 app.include_router(admin.router, prefix="/admin")
 app.include_router(listings.router)
 app.include_router(notifications.router)
+app.include_router(reviews.router)
+app.include_router(abuse.router)
+app.include_router(credit_transactions.router)
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler()
@@ -36,6 +40,8 @@ scheduler = AsyncIOScheduler()
 async def startup_event():
     """Start the cleanup scheduler when the app starts"""
     scheduler.add_job(delete_old_listing_images, "interval", days=1)
+    scheduler.add_job(check_all_users_for_auto_refill, "interval", hours=1)  # Check every hour
+    scheduler.add_job(get_money_flow_summary, "interval", hours=6)  # Log money flow every 6 hours
     scheduler.start()
 
 @app.on_event("shutdown")

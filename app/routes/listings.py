@@ -4,6 +4,11 @@ from app.models.listing import ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
+from app.utils.rate_limiter import RateLimiter
+from app.utils.sanitizer import InputSanitizer
+from app.utils.circular_trade_detector import CircularTradeDetector
+from app.utils.wallet_auto_refill import WalletAutoRefill
+from app.models.credit_transaction import CreditTransactionType
 from app.database import db
 from pydantic import BaseModel
 from cloudinary import uploader
@@ -93,6 +98,22 @@ async def create_listing(
     images: List[UploadFile] = File([]),
     user: TokenUser = Depends(get_current_user)
 ):
+    # 1. Rate limiting: Check listing rate limit (3 per day)
+    can_create, rate_limit_msg = await RateLimiter.check_listing_rate_limit(user.id, window_hours=24, max_requests=3)
+    if not can_create:
+        raise HTTPException(status_code=429, detail=rate_limit_msg)
+    
+    # 2. Input sanitization
+    title = InputSanitizer.sanitize_text(title, max_length=100)
+    description = InputSanitizer.sanitize_text(description, max_length=1000)
+    category = InputSanitizer.sanitize_text(category, max_length=50)
+    condition = InputSanitizer.sanitize_text(condition, max_length=50) if condition else None
+    location = InputSanitizer.sanitize_text(location, max_length=100) if location else None
+    
+    # 3. Spam detection
+    if InputSanitizer.is_spam(title) or InputSanitizer.is_spam(description):
+        raise HTTPException(status_code=400, detail="Content appears to be spam and has been rejected.")
+    
     try:
         public_ids = []
 
@@ -398,6 +419,16 @@ async def accept_buy_request(
         "ref_note": f"Sold listing: {listing.get('title')}",
         "timestamp": now
     })
+    
+    # Record in credit transactions table
+    await WalletAutoRefill.record_credit_transaction(
+        user_id=str(seller_id),
+        amount=price,
+        transaction_type=CreditTransactionType.SALE_PROCEEDS,
+        reference_id=str(listing_obj_id),
+        description=f"Sold listing: {listing.get('title')}",
+        is_auto_refill=False
+    )
 
     # 4) Mark listing as sold
     await db.listings.update_one(
@@ -502,6 +533,12 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     if listing["posted_by"] == user.id:
         raise HTTPException(status_code=400, detail="You can't buy your own listing")
     
+    # Check for circular trade patterns
+    seller_id = str(listing["posted_by"])
+    is_circular, circular_reason = await CircularTradeDetector.detect_circular_trade(user.id, seller_id)
+    if is_circular:
+        raise HTTPException(status_code=400, detail=f"Trade blocked: {circular_reason}")
+    
     user_data = await db.users.find_one({"_id": buyer_id})
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
@@ -549,6 +586,16 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         "ref_note": f"Sold listing: {listing['title']}",
         "timestamp": now
     })
+    
+    # Record in credit transactions table
+    await WalletAutoRefill.record_credit_transaction(
+        user_id=str(seller_id),
+        amount=price,
+        transaction_type=CreditTransactionType.SALE_PROCEEDS,
+        reference_id=listing_id,
+        description=f"Sold listing: {listing['title']}",
+        is_auto_refill=False
+    )
 
     # Mark listing as sold
     await db.listings.update_one(
@@ -624,6 +671,8 @@ async def search_listings(
     max_price: Optional[float] = None,
     query: Optional[str] = None,
     exclude_sold: bool = True,
+    page: int = 1,
+    limit: int = 20,
 ):
     search_query = {}
 
@@ -647,15 +696,36 @@ async def search_listings(
     if exclude_sold:
         search_query["is_sold"] = False
 
-    results = await db.listings.find(search_query).to_list(length=None)
+    # Calculate pagination
+    skip = (page - 1) * limit
+    
+    # Get total count for pagination info
+    total_count = await db.listings.count_documents(search_query)
+    
+    # Get paginated results
+    results_cursor = db.listings.find(search_query).skip(skip).limit(limit).sort("created_at", -1)
+    results = await results_cursor.to_list(length=limit)
 
+    # Process results
     for listing in results:
         listing["id"] = str(listing["_id"])
         listing["posted_by"] = str(listing.get("posted_by", ""))
         listing["buyer_id"] = str(listing.get("buyer_id", ""))
-        listing["images"] = listing.get("images", [])
+        listing["images"] = [get_optimized_image_url(pid) for pid in listing.get("images", [])]
         listing.pop("_id", None)
-    return results
+    
+    # Return paginated response
+    return {
+        "listings": results,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total_count,
+            "pages": (total_count + limit - 1) // limit,
+            "has_next": page * limit < total_count,
+            "has_prev": page > 1
+        }
+    }
 
 @router.get("/my-listings", response_model=List[ListingResponse])
 async def get_my_listings(user: TokenUser = Depends(get_current_user)):

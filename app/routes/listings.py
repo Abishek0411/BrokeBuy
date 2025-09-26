@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body, Request
 from app.models.listing import ListingResponse, ListingUpdate, ListingOut
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
@@ -24,6 +24,24 @@ def serialize_objectid(value):
     elif isinstance(value, dict):
         return {k: serialize_objectid(v) for k, v in value.items()}
     return value
+
+# Dependency function to extract form data for listing updates
+async def get_listing_update_data(
+    title: str = Form(None),
+    description: str = Form(None),
+    price: float = Form(None),
+    category: str = Form(None),
+    condition: str = Form(None),
+    location: str = Form(None)
+) -> ListingUpdate:
+    return ListingUpdate(
+        title=title,
+        description=description,
+        price=price,
+        category=category,
+        condition=condition,
+        location=location
+    )
 
 # ---------- Models ----------
 class BuyRequestCreate(BaseModel):
@@ -735,7 +753,7 @@ async def get_listing_by_id(listing_id: str):
 @router.put("/{listing_id}")
 async def update_listing(
     listing_id: str,
-    update_data: ListingUpdate = Depends(),  # the base metadata updates
+    update_data: ListingUpdate = Depends(get_listing_update_data),  # the base metadata updates
     images_to_keep: List[str] = Form([]),    # `public_id`s from frontend
     new_images: List[UploadFile] = File([]), # new files to upload
     user: TokenUser = Depends(get_current_user)

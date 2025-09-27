@@ -123,7 +123,10 @@ class WalletAutoRefill:
         cutoff_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - \
                      timedelta(days=days)
         
-        match_query = {"created_at": {"$gte": cutoff_date}}
+        match_query = {
+            "created_at": {"$gte": cutoff_date},
+            "transaction_type": {"$ne": "auto_refill"}  # Exclude auto-refill transactions
+        }
         if user_id:
             match_query["user_id"] = ObjectId(user_id)
         
@@ -133,15 +136,9 @@ class WalletAutoRefill:
                 "$group": {
                     "_id": None,
                     "total_credits": {"$sum": "$amount"},
-                    "auto_refills": {
-                        "$sum": {"$cond": [{"$eq": ["$is_auto_refill", True]}, 1, 0]}
-                    },
                     "manual_topups": {
                         "$sum": {"$cond": [
-                            {"$and": [
-                                {"$eq": ["$transaction_type", CreditTransactionType.MANUAL_TOPUP.value]},
-                                {"$eq": ["$is_auto_refill", False]}
-                            ]}, 1, 0]}
+                            {"$eq": ["$transaction_type", CreditTransactionType.MANUAL_TOPUP.value]}, 1, 0]}
                     },
                     "sale_proceeds": {
                         "$sum": {"$cond": [
@@ -159,7 +156,6 @@ class WalletAutoRefill:
             summary = result[0]
             return {
                 "total_credits": summary.get("total_credits", 0.0),
-                "auto_refills": summary.get("auto_refills", 0),
                 "manual_topups": summary.get("manual_topups", 0),
                 "sale_proceeds": summary.get("sale_proceeds", 0.0),
                 "total_transactions": summary.get("total_transactions", 0),
@@ -169,7 +165,6 @@ class WalletAutoRefill:
         
         return {
             "total_credits": 0.0,
-            "auto_refills": 0,
             "manual_topups": 0,
             "sale_proceeds": 0.0,
             "total_transactions": 0,

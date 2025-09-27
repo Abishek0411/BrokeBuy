@@ -80,12 +80,14 @@
 
 ### 10. 🧠 Circular Trade Detection
 - **Location**: `app/utils/circular_trade_detector.py`, `app/routes/listings.py`
+- **Status**: ⚠️ **TEMPORARILY DISABLED** for testing phase
 - **Implementation**:
   - Detects direct circular trades (A sells to B, B sells to A)
   - Detects complex circular patterns (A→B→C→A)
   - Detects rapid back-and-forth trading
-  - Integrated into purchase process
+  - ~~Integrated into purchase process~~ (commented out)
 - **Effect**: Prevents artificial trading patterns and potential abuse
+- **Note**: Can be re-enabled by uncommenting the code in `app/routes/listings.py`
 
 ## 🔧 Technical Implementation Details
 

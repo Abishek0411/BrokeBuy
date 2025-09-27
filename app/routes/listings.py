@@ -6,7 +6,7 @@ from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.utils.rate_limiter import RateLimiter
 from app.utils.sanitizer import InputSanitizer
-from app.utils.circular_trade_detector import CircularTradeDetector
+# from app.utils.circular_trade_detector import CircularTradeDetector  # Temporarily disabled for testing
 from app.utils.wallet_auto_refill import WalletAutoRefill
 from app.models.credit_transaction import CreditTransactionType
 from app.database import db
@@ -407,6 +407,11 @@ async def accept_buy_request(
         "timestamp": now
     })
 
+    # ✅ Check for auto-refill after debit
+    was_refilled, refill_message, new_balance = await WalletAutoRefill.check_and_refill_wallet(str(buyer_id))
+    if was_refilled:
+        print(f"Auto-refilled buyer wallet after purchase: {refill_message}")
+
     # 3) Credit seller (IGNORE 50K cap for sales)
     await db.users.update_one(
         {"_id": seller_id},
@@ -533,11 +538,11 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
     if listing["posted_by"] == user.id:
         raise HTTPException(status_code=400, detail="You can't buy your own listing")
     
-    # Check for circular trade patterns
-    seller_id = str(listing["posted_by"])
-    is_circular, circular_reason = await CircularTradeDetector.detect_circular_trade(user.id, seller_id)
-    if is_circular:
-        raise HTTPException(status_code=400, detail=f"Trade blocked: {circular_reason}")
+    # Circular trade detection temporarily disabled for testing phase
+    # seller_id = str(listing["posted_by"])
+    # is_circular, circular_reason = await CircularTradeDetector.detect_circular_trade(user.id, seller_id)
+    # if is_circular:
+    #     raise HTTPException(status_code=400, detail=f"Trade blocked: {circular_reason}")
     
     user_data = await db.users.find_one({"_id": buyer_id})
     if not user_data:
@@ -566,6 +571,11 @@ async def buy_listing(listing_id: str, user=Depends(get_current_user)):
         "ref_note": f"Purchased listing: {listing['title']}",
         "timestamp": now
     })
+
+    # ✅ Check for auto-refill after debit
+    was_refilled, refill_message, new_balance = await WalletAutoRefill.check_and_refill_wallet(str(buyer_id))
+    if was_refilled:
+        print(f"Auto-refilled buyer wallet after purchase: {refill_message}")
 
     # ✅ Credit seller wallet
     seller_id = listing["posted_by"]

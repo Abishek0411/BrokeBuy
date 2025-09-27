@@ -19,8 +19,11 @@ async def get_my_credit_transactions(
 ):
     """Get credit transactions for the current user"""
     
-    # Build query
-    query = {"user_id": ObjectId(user.id)}
+    # Build query - exclude auto-refill transactions
+    query = {
+        "user_id": ObjectId(user.id),
+        "transaction_type": {"$ne": "auto_refill"}  # Exclude auto-refill transactions
+    }
     if transaction_type:
         query["transaction_type"] = transaction_type
     
@@ -74,8 +77,10 @@ async def get_all_credit_transactions(
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    # Build query
-    query = {}
+    # Build query - exclude auto-refill transactions
+    query = {
+        "transaction_type": {"$ne": "auto_refill"}  # Exclude auto-refill transactions
+    }
     if user_id:
         query["user_id"] = ObjectId(user_id)
     if transaction_type:
@@ -151,9 +156,12 @@ async def get_money_flow_stats(
     cutoff_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - \
                  timedelta(days=days)
     
-    # Get detailed statistics
+    # Get detailed statistics - exclude auto-refill transactions
     pipeline = [
-        {"$match": {"created_at": {"$gte": cutoff_date}}},
+        {"$match": {
+            "created_at": {"$gte": cutoff_date},
+            "transaction_type": {"$ne": "auto_refill"}  # Exclude auto-refill transactions
+        }},
         {
             "$group": {
                 "_id": "$transaction_type",
@@ -167,9 +175,12 @@ async def get_money_flow_stats(
     
     stats = await db.credit_transactions.aggregate(pipeline).to_list(None)
     
-    # Get daily breakdown
+    # Get daily breakdown - exclude auto-refill transactions
     daily_pipeline = [
-        {"$match": {"created_at": {"$gte": cutoff_date}}},
+        {"$match": {
+            "created_at": {"$gte": cutoff_date},
+            "transaction_type": {"$ne": "auto_refill"}  # Exclude auto-refill transactions
+        }},
         {
             "$group": {
                 "_id": {

@@ -32,7 +32,6 @@ class CreditTransactionResponse(BaseModel):
 
 class CreditTransactionSummary(BaseModel):
     total_credits: float
-    auto_refills: int
     manual_topups: int
     sale_proceeds: float
     total_transactions: int

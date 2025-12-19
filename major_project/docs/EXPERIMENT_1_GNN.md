@@ -54,9 +54,12 @@ including graph construction, data loading, training, and evaluation.
 - **Interpretation**: Model correctly learned the observed label distribution
 
 ### Updated Run (With Fraud Samples)
-- Expected: Model should learn to distinguish fraud from normal users
-- Class weights: Fraud class receives higher weight (inverse frequency)
-- **Note**: Results depend on train/test split - if fraud users are in test set, model should detect them
+- **Class Distribution**: Normal: 27, Suspicious: 1, Fraud: 2
+- **Class Weights**: Normal: 0.0723, Suspicious: 1.9518, Fraud: 0.9759
+- **Training**: Model trained successfully, training accuracy: 95.24%
+- **Test Set Issue**: All fraud users (2) ended up in training set, test set only contains Normal users
+- **Test Results**: Model correctly predicted all 5 test users as Normal (100% accuracy)
+- **Limitation**: Cannot evaluate fraud detection performance because no fraud samples in test set
 
 ## Interpretation
 
@@ -82,24 +85,53 @@ By forcing fraud labels, we test whether the model can:
 2. **Class Weight Handling**: ✅ System correctly handles missing classes
    - Always returns 3-class weights even if classes are missing
    - Prevents runtime errors with CrossEntropyLoss
+   - Correctly weights rare classes (Suspicious: 1.95x, Fraud: 0.98x)
 
 3. **Evaluation Robustness**: ✅ Handles imbalanced test sets
    - Confusion matrix always 3x3
    - Classification report handles missing classes
 
+4. **Train/Test Split Issue**: ⚠️ Small dataset limitation
+   - With only 2 fraud samples, stratified split placed both in training set
+   - Test set contains only Normal users (5 samples)
+   - Model correctly predicts Normal users (100% accuracy on test set)
+   - **Cannot evaluate fraud detection** because no fraud in test set
+   - This is expected with very small datasets and rare classes
+
 ## Limitations
 
 - Synthetic data (not real-world fraud patterns)
-- Small dataset (30 users)
+- Small dataset (30 users) - too small for meaningful train/test split
 - Forced labels (not discovered fraud)
+- **Train/test split issue**: All fraud samples ended up in training, none in test
 - Intended for pipeline validation, not performance evaluation
 - No graph structure features (only user nodes, no listings/devices)
+- Cannot evaluate fraud detection performance (no fraud in test set)
 
 ## Next Steps
 
-- Test with larger synthetic datasets
-- Add more graph structure (listings, devices, transactions)
-- Test with real BrokeBuy data
-- Compare with baseline ML models
-- Evaluate on held-out test set with fraud samples
+- **Larger Dataset**: Test with 100+ users to ensure fraud samples in test set
+- **Manual Split**: Use manual train/test split to ensure fraud samples in both sets
+- **More Graph Structure**: Add listings, devices, transactions for richer graph
+- **Real Data**: Test with real BrokeBuy data
+- **Baseline Comparison**: Compare GNN with baseline ML models
+- **Cross-Validation**: Use k-fold CV to better evaluate with small datasets
+
+## Actual Results Summary
+
+**Training:**
+- Loss: Converged to 0.0 (best validation loss)
+- Training Accuracy: 95.24% (20/21 samples correct)
+- Early Stopping: Epoch 13 (out of 30)
+
+**Test Set:**
+- Test Samples: 5 (all Normal users)
+- Test Accuracy: 100% (5/5 correct)
+- Fraud Detection: Cannot evaluate (no fraud in test set)
+
+**Model Behavior:**
+- Model learned to predict Normal class correctly
+- Training set contained 2 fraud users, model saw them during training
+- Test set only had Normal users, model correctly identified them
+- This validates the pipeline works, but cannot test fraud detection capability
 

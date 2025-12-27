@@ -3,6 +3,7 @@ from app.routes import auth, listings, messages, users, wallet, admin, notificat
 from app.tasks.image_cleanup import AsyncIOScheduler, delete_old_listing_images
 from app.tasks.wallet_auto_refill_task import check_all_users_for_auto_refill, get_money_flow_summary
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import DEMO_MODE
 
 app = FastAPI()
 
@@ -32,6 +33,13 @@ app.include_router(notifications.router)
 app.include_router(reviews.router)
 app.include_router(abuse.router)
 app.include_router(credit_transactions.router)
+
+# DEMO ONLY – NOT FOR PRODUCTION
+# Demo routes are only registered when DEMO_MODE=True
+# These routes are for project review demonstrations only
+if DEMO_MODE:
+    from demo import routes as demo_routes
+    app.include_router(demo_routes.router)
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler()

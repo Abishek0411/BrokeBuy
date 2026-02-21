@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.utils.auth import get_current_user
 from app.utils.rate_limiter import RateLimiter
+from app.config import SAFETY_GUARDS_ENABLED
 from app.utils.wallet_auto_refill import WalletAutoRefill
 from app.models.credit_transaction import CreditTransactionType
 from app.database import db, client
@@ -26,9 +27,10 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Invalid top-up amount")
 
     # 1. Check daily credit limit
-    can_credit, credit_limit_msg = await RateLimiter.check_daily_credit_limit(user.id, max_amount=10000.0)
-    if not can_credit:
-        raise HTTPException(status_code=429, detail=credit_limit_msg)
+    if SAFETY_GUARDS_ENABLED:
+        can_credit, credit_limit_msg = await RateLimiter.check_daily_credit_limit(user.id, max_amount=10000.0)
+        if not can_credit:
+            raise HTTPException(status_code=429, detail=credit_limit_msg)
 
     # 2. Check top-up limit
     if (user.wallet_balance or 0) + data.amount > 50000:
@@ -42,8 +44,9 @@ async def top_up_wallet(data: WalletAdd, user=Depends(get_current_user)):
         "timestamp": {"$gte": start_of_day}
     })
 
-    if topups_today >= 2:
-        raise HTTPException(status_code=400, detail="You can only top-up twice per day")
+    if SAFETY_GUARDS_ENABLED:
+        if topups_today >= 2:
+            raise HTTPException(status_code=400, detail="You can only top-up twice per day")
 
     # 4. Update wallet (without transaction for standalone MongoDB)
     try:

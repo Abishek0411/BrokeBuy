@@ -6,6 +6,7 @@ from app.utils.cloudinary import get_optimized_image_url
 from app.models.message import MessageCreate, ChatResponse
 from app.database import db
 from app.utils.rate_limiter import RateLimiter
+from app.config import SAFETY_GUARDS_ENABLED
 from datetime import datetime, timezone
 from typing import List
 from app.routes.listings import _notify
@@ -16,9 +17,10 @@ router = APIRouter(prefix="/messages", tags=["Messages"])
 @router.post("/send", response_model=dict)
 async def send_message(data: MessageCreate, user: TokenUser = Depends(get_current_user)):
     # 1. Rate limiting: Check message rate limit (3 per 10s)
-    can_send, rate_limit_msg = await RateLimiter.check_message_rate_limit(user.id, window_seconds=10, max_requests=3)
-    if not can_send:
-        raise HTTPException(status_code=429, detail=rate_limit_msg)
+    if SAFETY_GUARDS_ENABLED:
+        can_send, rate_limit_msg = await RateLimiter.check_message_rate_limit(user.id, window_seconds=10, max_requests=3)
+        if not can_send:
+            raise HTTPException(status_code=429, detail=rate_limit_msg)
 
     # 2. Validation: Prevent sending messages to oneself
     if user.id == data.receiver_id:

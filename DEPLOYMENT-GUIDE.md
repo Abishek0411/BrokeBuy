@@ -49,9 +49,9 @@ The script will:
 ### 3. Access Your Application
 
 After successful deployment, your application will be available at:
-- **Frontend**: http://172.16.0.60
-- **Backend API**: http://172.16.0.60:8000
-- **API Documentation**: http://172.16.0.60:8000/docs
+- **Frontend**: http://172.16.0.60:8081
+- **Backend API**: http://172.16.0.60:8001
+- **API Documentation**: http://172.16.0.60:8001/docs
 - **Scraper Service**: http://172.16.0.60:3001
 
 ## Server Management

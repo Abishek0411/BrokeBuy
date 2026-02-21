@@ -3,6 +3,7 @@ from typing import Dict, Tuple
 from app.database import db
 from bson import ObjectId
 import asyncio
+from app.config import SAFETY_GUARDS_ENABLED
 
 class RateLimiter:
     """Rate limiter for various operations"""
@@ -10,6 +11,8 @@ class RateLimiter:
     @staticmethod
     async def check_message_rate_limit(user_id: str, window_seconds: int = 10, max_requests: int = 3) -> Tuple[bool, str]:
         """Check if user can send a message based on rate limit"""
+        if not SAFETY_GUARDS_ENABLED:
+            return True, ""
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=window_seconds)
         
@@ -27,6 +30,8 @@ class RateLimiter:
     @staticmethod
     async def check_listing_rate_limit(user_id: str, window_hours: int = 24, max_requests: int = 3) -> Tuple[bool, str]:
         """Check if user can create a listing based on daily rate limit"""
+        if not SAFETY_GUARDS_ENABLED:
+            return True, ""
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(hours=window_hours)
         
@@ -44,6 +49,8 @@ class RateLimiter:
     @staticmethod
     async def check_daily_credit_limit(user_id: str, max_amount: float = 10000.0) -> Tuple[bool, str]:
         """Check if user has exceeded daily credit transaction limit"""
+        if not SAFETY_GUARDS_ENABLED:
+            return True, ""
         now = datetime.now(timezone.utc)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         

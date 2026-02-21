@@ -32,9 +32,9 @@ services:
     container_name: brokebuy-backend-prod
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
-      - MONGODB_URL=mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/brokebuy?authSource=admin
+      - MONGO_URI=mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/brokebuy?authSource=admin
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
       - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
@@ -80,7 +80,7 @@ services:
     container_name: brokebuy-frontend-prod
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8081:80"
     depends_on:
       - backend
       - scraper
@@ -93,23 +93,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # Nginx Reverse Proxy (Optional - for better production setup)
-  nginx:
-    image: nginx:alpine
-    container_name: brokebuy-nginx-prod
-    restart: unless-stopped
-    ports:
-      - "443:443"
-      - "8080:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./nginx/ssl:/etc/nginx/ssl
-    depends_on:
-      - frontend
-      - backend
-      - scraper
-    networks:
-      - brokebuy-network
+  # Nginx Reverse Proxy (Optional - disabled for now due to missing host config)
 
 volumes:
   mongodb_data:

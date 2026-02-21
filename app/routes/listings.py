@@ -6,6 +6,7 @@ from app.utils.auth import get_current_user
 from app.utils.cloudinary import upload_image_to_cloudinary, get_optimized_image_url
 from app.utils.rate_limiter import RateLimiter
 from app.utils.sanitizer import InputSanitizer
+from app.config import SAFETY_GUARDS_ENABLED
 # from app.utils.circular_trade_detector import CircularTradeDetector  # Temporarily disabled for testing
 from app.utils.wallet_auto_refill import WalletAutoRefill
 from app.models.credit_transaction import CreditTransactionType
@@ -99,20 +100,23 @@ async def create_listing(
     user: TokenUser = Depends(get_current_user)
 ):
     # 1. Rate limiting: Check listing rate limit (3 per day)
-    can_create, rate_limit_msg = await RateLimiter.check_listing_rate_limit(user.id, window_hours=24, max_requests=3)
-    if not can_create:
-        raise HTTPException(status_code=429, detail=rate_limit_msg)
+    if SAFETY_GUARDS_ENABLED:
+        can_create, rate_limit_msg = await RateLimiter.check_listing_rate_limit(user.id, window_hours=24, max_requests=3)
+        if not can_create:
+            raise HTTPException(status_code=429, detail=rate_limit_msg)
     
     # 2. Input sanitization
-    title = InputSanitizer.sanitize_text(title, max_length=100)
-    description = InputSanitizer.sanitize_text(description, max_length=1000)
-    category = InputSanitizer.sanitize_text(category, max_length=50)
-    condition = InputSanitizer.sanitize_text(condition, max_length=50) if condition else None
-    location = InputSanitizer.sanitize_text(location, max_length=100) if location else None
+    if SAFETY_GUARDS_ENABLED:
+        title = InputSanitizer.sanitize_text(title, max_length=100)
+        description = InputSanitizer.sanitize_text(description, max_length=1000)
+        category = InputSanitizer.sanitize_text(category, max_length=50)
+        condition = InputSanitizer.sanitize_text(condition, max_length=50) if condition else None
+        location = InputSanitizer.sanitize_text(location, max_length=100) if location else None
     
     # 3. Spam detection
-    if InputSanitizer.is_spam(title) or InputSanitizer.is_spam(description):
-        raise HTTPException(status_code=400, detail="Content appears to be spam and has been rejected.")
+    if SAFETY_GUARDS_ENABLED:
+        if InputSanitizer.is_spam(title) or InputSanitizer.is_spam(description):
+            raise HTTPException(status_code=400, detail="Content appears to be spam and has been rejected.")
     
     try:
         public_ids = []

@@ -1,6 +1,7 @@
 import re
 import html
 from typing import Optional
+from app.config import SAFETY_GUARDS_ENABLED
 
 class InputSanitizer:
     """Utility class for sanitizing user inputs"""
@@ -23,6 +24,8 @@ class InputSanitizer:
     @staticmethod
     def sanitize_name(name: str) -> str:
         """Sanitize user name input"""
+        if not SAFETY_GUARDS_ENABLED:
+            return name or ""
         if not name:
             return ""
         
@@ -42,6 +45,8 @@ class InputSanitizer:
     @staticmethod
     def sanitize_bio(bio: str) -> str:
         """Sanitize user bio/description input"""
+        if not SAFETY_GUARDS_ENABLED:
+            return bio or ""
         if not bio:
             return ""
         
@@ -65,6 +70,8 @@ class InputSanitizer:
     @staticmethod
     def sanitize_text(text: str, max_length: int = 1000) -> str:
         """General text sanitization"""
+        if not SAFETY_GUARDS_ENABLED:
+            return (text or "")[:max_length] if text else ""
         if not text:
             return ""
         
@@ -86,6 +93,8 @@ class InputSanitizer:
     @staticmethod
     def is_spam(text: str) -> bool:
         """Check if text contains spam patterns"""
+        if not SAFETY_GUARDS_ENABLED:
+            return False
         if not text:
             return False
         

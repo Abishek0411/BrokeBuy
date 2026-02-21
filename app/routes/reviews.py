@@ -3,6 +3,7 @@ from app.models.review import ReviewCreate, ReviewResponse, ReviewUpdate
 from app.models.user import TokenUser
 from app.utils.auth import get_current_user
 from app.utils.sanitizer import InputSanitizer
+from app.config import SAFETY_GUARDS_ENABLED
 from app.database import db
 from bson import ObjectId
 from datetime import datetime, timezone
@@ -25,30 +26,30 @@ async def create_review(
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
     
-    # 3. Check if user actually purchased this listing
-    purchase_verified = await db.listings.find_one({
-        "_id": ObjectId(review_data.listing_id),
-        "buyer_id": user.id,
-        "is_sold": True
-    })
+    # 3. Check if user actually purchased this listing (guarded)
+    if SAFETY_GUARDS_ENABLED:
+        purchase_verified = await db.listings.find_one({
+            "_id": ObjectId(review_data.listing_id),
+            "buyer_id": user.id,
+            "is_sold": True
+        })
+        if not purchase_verified:
+            raise HTTPException(
+                status_code=403, 
+                detail="You can only review items you have purchased"
+            )
     
-    if not purchase_verified:
-        raise HTTPException(
-            status_code=403, 
-            detail="You can only review items you have purchased"
-        )
-    
-    # 4. Check if user already reviewed this listing
-    existing_review = await db.reviews.find_one({
-        "listing_id": ObjectId(review_data.listing_id),
-        "reviewer_id": ObjectId(user.id)
-    })
-    
-    if existing_review:
-        raise HTTPException(
-            status_code=400,
-            detail="You have already reviewed this item"
-        )
+    # 4. Check if user already reviewed this listing (guarded)
+    if SAFETY_GUARDS_ENABLED:
+        existing_review = await db.reviews.find_one({
+            "listing_id": ObjectId(review_data.listing_id),
+            "reviewer_id": ObjectId(user.id)
+        })
+        if existing_review:
+            raise HTTPException(
+                status_code=400,
+                detail="You have already reviewed this item"
+            )
     
     # 5. Create review
     review_doc = {
@@ -56,7 +57,7 @@ async def create_review(
         "reviewer_id": ObjectId(user.id),
         "rating": review_data.rating,
         "comment": comment,
-        "is_verified": True,  # Since we verified the purchase
+        "is_verified": True if SAFETY_GUARDS_ENABLED else False,
         "created_at": datetime.now(timezone.utc)
     }
     

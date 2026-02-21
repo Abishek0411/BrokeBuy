@@ -70,27 +70,45 @@ import numpy as np
 from .model import FraudGNN
 
 
-def compute_class_weights(labels: torch.Tensor) -> torch.Tensor:
+def compute_class_weights(labels: torch.Tensor, num_classes: int = 3) -> torch.Tensor:
     """
     Compute class weights for imbalanced data.
     
+    This function ensures weights are computed for ALL classes (0, 1, 2),
+    even if some classes are missing from the training data. This is critical
+    for fraud detection where class 1 (suspicious) might be rare or absent.
+    
     Args:
         labels: Tensor of labels (n_nodes,)
+        num_classes: Number of classes (default: 3 for normal, suspicious, fraud)
         
     Returns:
-        Class weights tensor (n_classes,)
+        Class weights tensor (num_classes,) - always shape [3] for 3-class problem
     """
-    # Count occurrences of each class
-    unique_labels, counts = torch.unique(labels[labels >= 0], return_counts=True)
-    n_classes = len(unique_labels)
-    total = counts.sum().float()
+    # Filter out unlabeled nodes (label == -1)
+    valid_labels = labels[labels >= 0]
     
-    # Compute weights: inverse frequency
-    weights = torch.zeros(n_classes)
-    for i, label in enumerate(unique_labels):
-        weights[label] = total / (n_classes * counts[i].float())
+    if len(valid_labels) == 0:
+        # No valid labels, return equal weights
+        return torch.ones(num_classes) / num_classes
     
-    return weights
+    # Count occurrences of each class using bincount
+    # This ensures we get counts for ALL classes 0..num_classes-1
+    label_counts = torch.bincount(valid_labels, minlength=num_classes)
+    
+    # Avoid division by zero: clamp to minimum of 1
+    # This handles missing classes gracefully
+    label_counts = torch.clamp(label_counts, min=1)
+    
+    # Compute inverse frequency weighting
+    # Classes with fewer samples get higher weights
+    total = label_counts.sum().float()
+    class_weights = total / (num_classes * label_counts.float())
+    
+    # Normalize weights (optional, but helps with stability)
+    class_weights = class_weights / class_weights.sum() * num_classes
+    
+    return class_weights
 
 
 def train_epoch(
@@ -211,6 +229,20 @@ def train_model(
     # Compute class weights
     class_weights = compute_class_weights(data.y)
     class_weights = class_weights.to(device)
+    
+    # Log class distribution and weights (for debugging and research transparency)
+    valid_labels = data.y[data.y >= 0]
+    if len(valid_labels) > 0:
+        label_counts = torch.bincount(valid_labels, minlength=3)
+        print(f"\nClass Distribution:")
+        print(f"  Normal (0):    {label_counts[0].item():6d} samples")
+        print(f"  Suspicious (1): {label_counts[1].item():6d} samples")
+        print(f"  Fraud (2):     {label_counts[2].item():6d} samples")
+        print(f"\nClass Weights (inverse frequency):")
+        print(f"  Normal (0):    {class_weights[0].item():.4f}")
+        print(f"  Suspicious (1): {class_weights[1].item():.4f}")
+        print(f"  Fraud (2):     {class_weights[2].item():.4f}")
+        print(f"  Weight tensor shape: {class_weights.shape} (expected: [3])")
     
     # Loss function with class weights
     criterion = nn.CrossEntropyLoss(weight=class_weights)

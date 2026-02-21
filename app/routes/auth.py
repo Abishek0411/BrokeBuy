@@ -12,6 +12,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 import time
 from app.database import db
+from app.config import SCRAPER_BASE_URL
 from app.utils.auth import create_access_token
 from app.utils.security_challenge import SecurityChallenge
 import requests
@@ -93,7 +94,7 @@ async def login(data: LoginRequest):
             # Step 2: Login to SRM only if no valid session exists
             if not srm_token:
                 async with httpx.AsyncClient() as client:
-                    res = await client.post("http://localhost:3001/login", json=data.model_dump())
+                    res = await client.post(f"{SCRAPER_BASE_URL}/login", json=data.model_dump())
                 
                 if res.status_code != 200:
                     raise HTTPException(status_code=res.status_code, detail="SRM authentication service failed.")
@@ -108,7 +109,7 @@ async def login(data: LoginRequest):
             if not user or not user.get("srm_id"):
                 async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
                     headers = {"X-CSRF-Token": srm_token}
-                    profile_res = await client.get("http://localhost:3001/profile", headers=headers)
+                    profile_res = await client.get(f"{SCRAPER_BASE_URL}/profile", headers=headers)
 
                 if profile_res.status_code != 200:
                     raise HTTPException(
@@ -214,7 +215,7 @@ async def logout(request: Request, user: TokenUser = Depends(get_current_user)):
         
         async with httpx.AsyncClient() as client:
             headers = {"X-CSRF-Token": token}
-            await client.delete("http://localhost:9000/logout", headers=headers)
+            await client.delete(f"{SCRAPER_BASE_URL}/logout", headers=headers)
 
         # Use the correct ObjectId from the full document
         await db.users.update_one(

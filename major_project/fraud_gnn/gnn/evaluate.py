@@ -119,8 +119,9 @@ def evaluate_gnn(
     except:
         roc_auc = 0.0
     
-    # Confusion matrix
-    cm = confusion_matrix(labels, pred)
+    # Confusion matrix - ensure it includes all 3 classes even if not present
+    # This handles cases where only some classes appear in test set
+    cm = confusion_matrix(labels, pred, labels=[0, 1, 2])
     
     if print_report:
         print("\n" + "="*60)
@@ -149,18 +150,26 @@ def evaluate_gnn(
         print(f"\nROC-AUC Score: {roc_auc:.4f}")
         
         print("\nConfusion Matrix:")
+        class_names = ['Normal', 'Suspicious', 'Fraud']
         print(" " * 15, end="")
-        for name in ['Normal', 'Suspicious', 'Fraud']:
+        for name in class_names:
             print(f"{name:>12}", end="")
         print()
-        for i, name in enumerate(['Normal', 'Suspicious', 'Fraud']):
+        # Now cm is guaranteed to be 3x3
+        for i, name in enumerate(class_names):
             print(f"{name:>12}", end="")
-            for j in range(len(cm[0])):
+            for j in range(3):
                 print(f"{cm[i, j]:>12}", end="")
             print()
         
         print("\nDetailed Classification Report:")
-        print(classification_report(labels, pred, target_names=['Normal', 'Suspicious', 'Fraud']))
+        # Force all 3 classes to be reported, even if not present in test set
+        print(classification_report(
+            labels, pred, 
+            target_names=['Normal', 'Suspicious', 'Fraud'],
+            labels=[0, 1, 2],  # Explicitly specify all class labels
+            zero_division=0
+        ))
     
     return {
         'binary_metrics': binary_metrics,
